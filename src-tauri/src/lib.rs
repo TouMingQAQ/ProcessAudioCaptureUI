@@ -1,40 +1,122 @@
-//! ProcessAudioCapture DLL 测试台 —— Tauri 后端。
+//! 进程音频监听 —— Tauri 后端。
 //!
-//! 对外暴露 5 个命令：
-//! * `dll_status`         —— DLL 是否加载成功、版本号、搜索到的候选路径
-//! * `reload_dll`         —— 重新尝试加载 DLL
-//! * `list_audio_windows` —— 可捕获音频的窗口列表（宿主侧补齐 DLL 缺失的能力）
-//! * `start_capture`      —— 按 PID 启动捕获
-//! * `stop_capture`       —— 停止捕获并返回本次会话汇总
+//! 命令一览：
+//! * `dll_status`          —— DLL 是否加载成功、版本号、搜索到的候选路径
+//! * `reload_dll`          —— 重新尝试加载 DLL
+//! * `list_audio_windows`  —— 可捕获音频的窗口列表（宿主侧补齐 DLL 缺失的能力）
+//! * `start_capture`       —— 按 PID 启动捕获
+//! * `start_capture_best`  —— 自动挑选当前最"响"的窗口并启动捕获
+//! * `stop_capture`        —— 停止捕获并返回本次会话汇总
+//! * `capture_status`      —— 当前采集状态（供悬浮球同步 UI）
+//! * `set_auto_follow`     —— 自动跟随开关
+//! * `set_ball_visible`    —— 显示 / 隐藏悬浮球（展开收起见 [`ball`]）
+//! * `show_main_window`    —— 唤起主窗口
+//!
+//! 另外还有一个系统托盘图标（见 [`tray`]），提供和悬浮球同款的功能菜单。
 
+mod ball;
 mod capture;
 mod dsp;
+mod monitor;
 mod pac;
 mod sessions;
+mod tray;
 mod wav;
 
-use std::path::PathBuf;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager, PhysicalPosition, State, WebviewWindow};
 
 use capture::{ActiveCapture, StartReport, StopReport};
 use pac::PacLibrary;
 use sessions::WindowListResult;
+
+/// 悬浮球窗口的逻辑尺寸 —— **恒定**，不随展开收起变化。
+///
+/// 收起时只是把面板藏起来，窗口照旧这么大、也绝不移动。这不是偷懒：
+/// WebView 的布局视口就是窗口客户区，窗口一 resize，视口会晚一帧才跟上，
+/// 那一帧里内容仍按旧视口排版、却已经画在新窗口的左上角 —— 表现出来就是
+/// 鼠标一碰小球，小球先闪到窗口左上角再弹回来。尺寸和位置全程不变，这一帧就不存在。
+const BALL_EXPANDED: (f64, f64) = (348.0, 468.0);
+/// 悬浮球启动时距屏幕右下角的逻辑边距。
+const BALL_MARGIN: f64 = 28.0;
 
 #[derive(Default)]
 pub struct AppState {
     library: Mutex<Option<Arc<PacLibrary>>>,
     active: Mutex<Option<ActiveCapture>>,
     load_error: Mutex<Option<String>>,
+    /// 自动跟随：当前采集源静音、且出现了新的发声窗口时自动切过去。
+    auto_follow: AtomicBool,
+    /// 最近一次使用的"顺便录 WAV"设置，自动跟随切换时会沿用。
+    record_wav: AtomicBool,
 }
 
 /// 中毒的锁也要能拿到，否则一次 panic 会让整个应用卡死。
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// 当前采集会话的只读快照。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureStatus {
+    pub active: bool,
+    pub pid: Option<u32>,
+    pub process_name: Option<String>,
+    pub total_frames: u64,
+    pub sample_rate: u32,
+    pub channels: u32,
+}
+
+impl AppState {
+    /// 正在采集的 PID（没有会话时为 `None`）。
+    pub(crate) fn captured_pid(&self) -> Option<u32> {
+        lock(&self.active).as_ref().map(|active| active.pid)
+    }
+
+    /// 采集线程是否已经自己结束了（不是用户停的）。
+    ///
+    /// 返回结束时的错误码；仍在正常采集时返回 `None`。
+    pub(crate) fn failed_session(&self) -> Option<i32> {
+        let guard = lock(&self.active);
+        let active = guard.as_ref()?;
+        if active.is_alive() {
+            return None;
+        }
+        Some(active.terminal_error())
+    }
+
+    pub(crate) fn capture_status(&self) -> CaptureStatus {
+        match lock(&self.active).as_ref() {
+            Some(active) => CaptureStatus {
+                active: true,
+                pid: Some(active.pid),
+                process_name: Some(active.process_name.clone()),
+                total_frames: active.counters.total_frames.load(Ordering::Relaxed),
+                sample_rate: active.counters.sample_rate.load(Ordering::Relaxed),
+                channels: active.counters.channels.load(Ordering::Relaxed),
+            },
+            None => CaptureStatus {
+                active: false,
+                pid: None,
+                process_name: None,
+                total_frames: 0,
+                sample_rate: 0,
+                channels: 0,
+            },
+        }
+    }
+
+    pub(crate) fn auto_follow(&self) -> bool {
+        self.auto_follow.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn record_wav(&self) -> bool {
+        self.record_wav.load(Ordering::Relaxed)
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -51,7 +133,7 @@ pub struct DllStatus {
 }
 
 /// 加载（或复用已加载的）DLL。
-fn ensure_library(app: &AppHandle, state: &AppState) -> Result<Arc<PacLibrary>, String> {
+pub(crate) fn ensure_library(app: &AppHandle, state: &AppState) -> Result<Arc<PacLibrary>, String> {
     if let Some(lib) = lock(&state.library).as_ref() {
         return Ok(Arc::clone(lib));
     }
@@ -64,6 +146,12 @@ fn ensure_library(app: &AppHandle, state: &AppState) -> Result<Arc<PacLibrary>, 
         match PacLibrary::load(path) {
             Ok(lib) => {
                 let lib = Arc::new(lib);
+                if !lib.has_extras() {
+                    eprintln!(
+                        "[ProcessAudioCapture] 采集内核为 v{}，缺少目标枚举 / DSP 能力（需要 v3 及以上）",
+                        lib.version()
+                    );
+                }
                 *lock(&state.library) = Some(Arc::clone(&lib));
                 *lock(&state.load_error) = None;
                 return Ok(lib);
@@ -84,7 +172,7 @@ fn expected_dir(app: &AppHandle) -> String {
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))
         .or_else(|| app.path().resource_dir().ok())
-        .unwrap_or_else(|| PathBuf::from("."))
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
         .display()
         .to_string()
 }
@@ -113,6 +201,58 @@ fn build_dll_status(app: &AppHandle, state: &AppState) -> DllStatus {
     }
 }
 
+/* ------------------------------------------------------------------ 会话控制 */
+/* 下面两个函数都是阻塞的（pac_start_capture 最长阻塞 10 秒），
+   调用方必须自己放到阻塞线程池里。 */
+
+pub(crate) fn stop_active(app: &AppHandle, state: &AppState, notify: bool) -> Option<StopReport> {
+    let active = { lock(&state.active).take() };
+    active.map(|active| active.stop(app, notify))
+}
+
+pub(crate) fn start_active(
+    app: &AppHandle,
+    state: &AppState,
+    pid: u32,
+    process_name: String,
+    record_wav: bool,
+) -> Result<StartReport, String> {
+    if pid == 0 {
+        return Err("PID 无效".to_string());
+    }
+
+    state.record_wav.store(record_wav, Ordering::Relaxed);
+
+    // 先停掉上一个会话（静默停：这是切换，不是用户点停止）
+    stop_active(app, state, false);
+
+    let library = ensure_library(app, state)?;
+    let wav_path = record_wav.then(|| recording_path(app, &process_name, pid));
+
+    let active = capture::start_capture(
+        app.clone(),
+        Arc::clone(&library),
+        pid,
+        process_name,
+        wav_path.clone(),
+    )?;
+
+    // 采集格式由内核在起流时就如实报出（capture.rs 已写进 counters），
+    // 不用再等首帧回调，界面可以立刻显示真实采样率。
+    let report = StartReport {
+        pid: active.pid,
+        process_name: active.process_name.clone(),
+        sample_rate: active.counters.sample_rate.load(Ordering::Relaxed),
+        channels: active.counters.channels.load(Ordering::Relaxed),
+        dll_version: library.version(),
+        wav_path,
+        warnings: Vec::new(),
+    };
+
+    *lock(&state.active) = Some(active);
+    Ok(report)
+}
+
 #[tauri::command]
 fn dll_status(app: AppHandle, state: State<'_, AppState>) -> DllStatus {
     build_dll_status(&app, &state)
@@ -130,19 +270,27 @@ fn reload_dll(app: AppHandle, state: State<'_, AppState>) -> DllStatus {
 
 /// 枚举"可捕获音频的窗口"。
 ///
-/// 这是 DLL **没有提供**的能力：DLL 只认 PID，所以窗口枚举与音频会话探测都在宿主侧完成。
+/// 窗口枚举 / 音频会话探测 / 媒体信息合并全在采集内核里完成（`pac_enum_targets`），
+/// 这里只是把内核的结果转成前端结构。
 #[tauri::command]
-async fn list_audio_windows() -> Result<WindowListResult, String> {
-    tauri::async_runtime::spawn_blocking(sessions::list_audio_windows)
-        .await
-        .map_err(|e| format!("枚举窗口失败：{e}"))
+async fn list_audio_windows(app: AppHandle) -> Result<WindowListResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let library = ensure_library(&app, &state)?;
+        sessions::list_audio_windows(&library)
+    })
+    .await
+    .map_err(|e| format!("枚举窗口失败：{e}"))?
 }
 
-/// 启动捕获。`pac_start_capture` 最多阻塞 10 秒，因此放在阻塞线程池执行。
+#[tauri::command]
+fn capture_status(state: State<'_, AppState>) -> CaptureStatus {
+    state.capture_status()
+}
+
 #[tauri::command]
 async fn start_capture(
     app: AppHandle,
-    state: State<'_, AppState>,
     pid: u32,
     process_name: String,
     record_wav: bool,
@@ -151,60 +299,46 @@ async fn start_capture(
         return Err("PID 无效".to_string());
     }
 
-    // 1. 停掉上一个会话（若有）。注意别把 MutexGuard 带过 await，否则 future 不是 Send。
-    let previous = { lock(&state.active).take() };
-    if let Some(previous) = previous {
-        let app_for_stop = app.clone();
-        let _ = tauri::async_runtime::spawn_blocking(move || previous.stop(&app_for_stop)).await;
-    }
-
-    // 2. 确保 DLL 可用
-    let library = ensure_library(&app, &state)?;
-
-    // 3. 录制路径
-    let wav_path = if record_wav {
-        Some(recording_path(&app, &process_name, pid))
-    } else {
-        None
-    };
-
-    // 4. 在阻塞线程里真正启动采集
-    let app_for_start = app.clone();
-    let lib_for_start = Arc::clone(&library);
-    let name_for_start = process_name.clone();
-    let wav_for_start = wav_path.clone();
-
-    let active = tauri::async_runtime::spawn_blocking(move || {
-        let active = capture::start_capture(
-            app_for_start,
-            lib_for_start,
-            pid,
-            name_for_start,
-            wav_for_start,
-        )?;
-
-        // 稍等首帧回调，好把真实采样格式回报给前端
-        let deadline = Instant::now() + Duration::from_millis(1200);
-        while active.counters.sample_rate.load(Ordering::Relaxed) == 0 && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        Ok::<_, String>(active)
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        start_active(&app, &state, pid, process_name, record_wav)
     })
     .await
-    .map_err(|e| format!("启动任务异常：{e}"))??;
+    .map_err(|e| format!("启动任务异常：{e}"))?
+}
 
-    let report = StartReport {
-        pid: active.pid,
-        process_name: active.process_name.clone(),
-        sample_rate: active.counters.sample_rate.load(Ordering::Relaxed),
-        channels: active.counters.channels.load(Ordering::Relaxed),
-        dll_version: library.version(),
-        wav_path: if record_wav { wav_path } else { None },
-        warnings: Vec::new(),
-    };
+/// 自动挑一个当前正在出声的窗口开始采集（悬浮球上的"开始采集"用它）。
+#[tauri::command]
+async fn start_capture_best(
+    app: AppHandle,
+    record_wav: bool,
+) -> Result<StartReport, String> {
+    let app_for_pick = app.clone();
+    let target = tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
+        let state = app_for_pick.state::<AppState>();
+        let library = ensure_library(&app_for_pick, &state)?;
+        let result = sessions::list_audio_windows(&library)?;
+        Ok(monitor::pick_candidate(&result.windows, None, std::process::id()))
+    })
+    .await
+    .map_err(|e| format!("枚举窗口异常：{e}"))??;
 
-    *lock(&state.active) = Some(active);
-    Ok(report)
+    let target = target.ok_or_else(|| {
+        "现在没有任何窗口在出声，先让音乐 / 视频播起来再试".to_string()
+    })?;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        start_active(
+            &app,
+            &state,
+            target.pid,
+            target.process_name.clone(),
+            record_wav,
+        )
+    })
+    .await
+    .map_err(|e| format!("启动任务异常：{e}"))?
 }
 
 /// 停止捕获，返回本次会话汇总（帧数 / 时长 / WAV 路径）。
@@ -213,19 +347,82 @@ async fn stop_capture(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Option<StopReport>, String> {
-    let active = { lock(&state.active).take() };
-    let Some(active) = active else {
+    if state.captured_pid().is_none() {
         return Ok(None);
-    };
+    }
 
-    let report = tauri::async_runtime::spawn_blocking(move || active.stop(&app))
-        .await
-        .map_err(|e| format!("停止任务异常：{e}"))?;
-
-    Ok(Some(report))
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        stop_active(&app, &state, true)
+    })
+    .await
+    .map_err(|e| format!("停止任务异常：{e}"))
 }
 
-fn recording_path(app: &AppHandle, process_name: &str, pid: u32) -> PathBuf {
+#[tauri::command]
+fn set_auto_follow(state: State<'_, AppState>, enabled: bool) -> bool {
+    state.auto_follow.store(enabled, Ordering::Relaxed);
+    enabled
+}
+
+/* -------------------------------------------------------------- 悬浮球窗口 */
+
+fn ball_window(app: &AppHandle) -> Result<WebviewWindow, String> {
+    app.get_webview_window("ball")
+        .ok_or_else(|| "悬浮球窗口不存在".to_string())
+}
+
+#[tauri::command]
+fn set_ball_visible(app: AppHandle, visible: bool) -> Result<(), String> {
+    let window = ball_window(&app)?;
+    if visible {
+        window.show().map_err(|e| e.to_string())
+    } else {
+        // 隐藏前先恢复穿透，免得再显示出来时挡住桌面
+        let _ = window.set_ignore_cursor_events(true);
+        window.hide().map_err(|e| e.to_string())
+    }
+}
+
+#[tauri::command]
+fn show_main_window(app: AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "主窗口不存在".to_string())?;
+    // 可能刚才是最小化 / 被收进托盘的状态，先还原再显示
+    let _ = window.unminimize();
+    window.show().map_err(|e| e.to_string())?;
+    let _ = window.set_focus();
+    // 主界面一露脸，托盘菜单上的"隐藏主界面"就得跟上
+    tray::sync(&app);
+    Ok(())
+}
+
+/// 把悬浮球放到主显示器右下角。
+/// 把悬浮球摆到主屏右下角，并切成"收起"状态。
+///
+/// 小球在窗口内部锚定在**右下角**（见 `ball.css` 的 `.orb`），所以这里按窗口的
+/// 右下角对齐 —— 窗口有多大都不影响小球落在哪儿。
+fn place_ball(window: &WebviewWindow) {
+    let Ok(Some(monitor)) = window.primary_monitor() else {
+        return;
+    };
+    let scale = monitor.scale_factor();
+    let w = (BALL_EXPANDED.0 * scale).round() as i32;
+    let h = (BALL_EXPANDED.1 * scale).round() as i32;
+    let margin = (BALL_MARGIN * scale).round() as i32;
+    let origin = monitor.position();
+    let bounds = monitor.size();
+
+    let x = origin.x + bounds.width as i32 - w - margin;
+    let y = origin.y + bounds.height as i32 - h - margin * 3;
+    let _ = window.set_position(PhysicalPosition::new(x, y));
+
+    // 收起状态：整窗鼠标穿透，悬停交给 `ball` 模块轮询判断
+    let _ = window.set_ignore_cursor_events(true);
+}
+
+fn recording_path(app: &AppHandle, process_name: &str, pid: u32) -> std::path::PathBuf {
     let stem = std::path::Path::new(process_name)
         .file_stem()
         .and_then(|s| s.to_str())
@@ -251,21 +448,54 @@ fn recording_path(app: &AppHandle, process_name: &str, pid: u32) -> PathBuf {
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
-        .setup(|app| {
-            // 启动时就尝试加载一次 DLL，方便 UI 立刻显示状态
-            let handle = app.handle().clone();
-            let state = app.state::<AppState>();
-            if let Err(err) = ensure_library(&handle, &state) {
-                eprintln!("[ProcessAudioCapture] {err}");
+        // 点 × 只是把主界面收进托盘：采集与悬浮球继续在后台跑，
+        // 想彻底退出用托盘菜单里的"退出"。
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                    tray::sync(window.app_handle());
+                }
             }
+        })
+        .setup(|app| {
+            let handle = app.handle().clone();
+
+            // 启动时就尝试加载一次 DLL，方便 UI 立刻显示状态
+            {
+                let state = app.state::<AppState>();
+                if let Err(err) = ensure_library(&handle, &state) {
+                    eprintln!("[ProcessAudioCapture] {err}");
+                }
+            }
+
+            // 悬浮球定位后显示，避免先出现在左上角再跳过去
+            if let Some(ball) = app.get_webview_window("ball") {
+                place_ball(&ball);
+                let _ = ball.show();
+            }
+
+            // 系统托盘：程序常驻后台时的总控入口
+            tray::setup(&handle)?;
+
+            // 悬浮球的悬停检测：窗口尺寸恒定，靠轮询光标决定展开 / 收起
+            ball::spawn(handle.clone());
+
+            monitor::spawn(handle);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             dll_status,
             reload_dll,
             list_audio_windows,
+            capture_status,
             start_capture,
-            stop_capture
+            start_capture_best,
+            stop_capture,
+            set_auto_follow,
+            set_ball_visible,
+            show_main_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

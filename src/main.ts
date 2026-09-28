@@ -2,12 +2,16 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import "./styles.css";
 import {
   EVT_AUDIO,
+  EVT_CAPTURE_CHANGED,
   EVT_ERROR,
+  EVT_MONITOR,
   EVT_STOPPED,
   api,
   type AudioFrameEvent,
   type AudioWindowInfo,
+  type CaptureChanged,
   type DllStatus,
+  type MonitorTick,
   type StopReport,
 } from "./api";
 import { Visualizer, formatDb } from "./visualizer";
@@ -24,7 +28,9 @@ const dllBadge = $<HTMLDivElement>("dll-badge");
 const dllBadgeText = $<HTMLSpanElement>("dll-badge-text");
 const btnReload = $<HTMLButtonElement>("btn-reload");
 const btnRefresh = $<HTMLButtonElement>("btn-refresh");
+const btnBall = $<HTMLButtonElement>("btn-ball");
 const btnCapture = $<HTMLButtonElement>("btn-capture");
+const followMain = $<HTMLInputElement>("follow-main");
 const searchInput = $<HTMLInputElement>("search");
 const filterAudio = $<HTMLInputElement>("filter-audio");
 const recordWav = $<HTMLInputElement>("record-wav");
@@ -54,6 +60,8 @@ let selectedPid: number | null = null;
 let capturingPid: number | null = null;
 let lastFrame: AudioFrameEvent | null = null;
 let lastDllStatus: DllStatus | null = null;
+let autoFollow = false;
+let ballVisible = true;
 
 /* ------------------------------------------------------------------- 日志 */
 
@@ -76,11 +84,11 @@ function renderDllStatus(status: DllStatus) {
 
   if (status.loaded) {
     dllBadge.classList.add("badge-ok");
-    dllBadgeText.textContent = `DLL v${status.version} 已加载`;
+    dllBadgeText.textContent = `采集内核 v${status.version} 已就绪`;
     dllBadge.title = status.path ?? "";
   } else {
     dllBadge.classList.add("badge-error");
-    dllBadgeText.textContent = "DLL 未加载";
+    dllBadgeText.textContent = "采集内核未就绪";
     dllBadge.title = status.error ?? "";
   }
 
@@ -92,7 +100,7 @@ async function refreshDllStatus(reload: boolean) {
     const status = reload ? await api.reloadDll() : await api.dllStatus();
     renderDllStatus(status);
     if (status.loaded) {
-      log(`DLL 已加载：${status.path}（版本 ${status.version}）`);
+      log(`采集内核已就绪：${status.path}（版本 ${status.version}）`);
     } else {
       log(status.error ?? "DLL 未加载", "error");
       log(`请把 ProcessAudioCapture.dll 放到：${status.expectedDir}`, "warn");
@@ -169,7 +177,16 @@ function renderWindowList() {
     `;
 
     item.querySelector(".win-title")!.textContent = win.title;
-    item.querySelector(".win-proc")!.textContent = win.processName || "未知进程";
+    const procEl = item.querySelector(".win-proc")!;
+    procEl.textContent = win.processName || "未知进程";
+    if (!win.windowVisible) {
+      // 没有窗口的进程（播放器缩在托盘里），标题是从系统媒体信息取的，标一下免得困惑
+      const badge = document.createElement("span");
+      badge.className = "win-badge";
+      badge.textContent = "托盘";
+      badge.title = "该进程没有可见窗口，标题来自系统媒体信息（SMTC）";
+      procEl.after(badge);
+    }
     item.querySelector(".win-state")!.textContent = sessionLabel(win);
 
     item.addEventListener("click", () => selectWindow(win.pid));
@@ -326,8 +343,42 @@ function updateMeters(rms: number, peak: number, stale: boolean) {
   specMeta.textContent = `${frame.spectrum.length} 柱`;
 }
 
+/* ------------------------------------------------- 实时扫描 / 悬浮球联动 */
+
+function syncBallButton() {
+  btnBall.textContent = `悬浮球 ${ballVisible ? "开" : "关"}`;
+  btnBall.setAttribute("aria-pressed", String(ballVisible));
+}
+
+/**
+ * 后端每 1.2 秒扫一次音频会话，这里把「当前监听窗口」的信息实时反映到界面上 ——
+ * 音乐软件切歌时窗口标题会跟着变。
+ */
+function applyTick(tick: MonitorTick) {
+  if (tick.autoFollow !== autoFollow) {
+    autoFollow = tick.autoFollow;
+    followMain.checked = autoFollow;
+  }
+  if (!tick.active || capturingPid === null) return;
+
+  const name = tick.capturing?.processName ?? tick.processName ?? "未知进程";
+  const title = tick.capturing?.title?.trim() ?? "";
+  const media = tick.media;
+  const titleEl = nowCapturing.querySelector(".nc-title");
+  const subEl = nowCapturing.querySelector(".nc-sub");
+  // SMTC 的曲名比窗口标题更干净，优先用；窗口标题读不到时它也是唯一来源
+  if (titleEl) titleEl.textContent = media?.title || title || name;
+  if (subEl) {
+    const who = media?.artist ? `${media.artist} · ${name}` : name;
+    subEl.textContent = `${who} · PID ${tick.pid} · ${tick.sampleRate || "?"} Hz / ${
+      tick.channels || "?"
+    } 声道 · ${tick.totalFrames.toLocaleString()} 帧`;
+  }
+}
+
 async function bootstrap() {
   visualizer.onRender = updateMeters;
+  syncBallButton();
 
   const unlisteners: UnlistenFn[] = [];
   unlisteners.push(
@@ -346,6 +397,14 @@ async function bootstrap() {
   unlisteners.push(
     await listen<string>(EVT_ERROR, (event) => log(event.payload, "error")),
   );
+  unlisteners.push(
+    await listen<MonitorTick>(EVT_MONITOR, (event) => applyTick(event.payload)),
+  );
+  unlisteners.push(
+    await listen<CaptureChanged>(EVT_CAPTURE_CHANGED, (event) => {
+      log(event.payload.message, event.payload.switched ? "info" : "warn");
+    }),
+  );
   window.addEventListener("beforeunload", () => unlisteners.forEach((fn) => fn()));
 
   btnReload.addEventListener("click", () => refreshDllStatus(true));
@@ -357,6 +416,31 @@ async function bootstrap() {
   btnCapture.addEventListener("click", () => {
     if (capturingPid !== null) void stopCapture();
     else void startCapture();
+  });
+  btnBall.addEventListener("click", async () => {
+    const next = !ballVisible;
+    try {
+      await api.setBallVisible(next);
+      ballVisible = next;
+      syncBallButton();
+      log(ballVisible ? "悬浮球已显示" : "悬浮球已隐藏");
+    } catch (err) {
+      log(`切换悬浮球失败：${String(err)}`, "error");
+    }
+  });
+  followMain.addEventListener("change", async () => {
+    try {
+      autoFollow = await api.setAutoFollow(followMain.checked);
+      followMain.checked = autoFollow;
+      log(
+        autoFollow
+          ? "自动跟随已开启：当前窗口安静下来、别的窗口开始出声时会自动切过去"
+          : "自动跟随已关闭",
+      );
+    } catch (err) {
+      followMain.checked = autoFollow;
+      log(`设置自动跟随失败：${String(err)}`, "error");
+    }
   });
 
   await refreshDllStatus(false);

@@ -14,14 +14,32 @@
     "windows": [
       {
         "label": "main",
-        "title": "ProcessAudioCapture 测试台",
+        "title": "进程音频监听",
         "width": 1320,
         "height": 860,
         "minWidth": 1000,
         "minHeight": 660,
         "resizable": true,
         "center": true,
-        "theme": "Dark"
+        "theme": "Light"
+      },
+      {
+        "label": "ball",
+        "title": "音频小球",
+        "url": "/ball.html",
+        "width": 348,
+        "height": 468,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "focus": false,
+        "visible": false,
+        "center": false
       }
     ],
     "security": {

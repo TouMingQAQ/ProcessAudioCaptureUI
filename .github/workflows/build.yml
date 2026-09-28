@@ -1,0 +1,86 @@
+name: Build
+
+# 触发方式：
+#   · 推送到 main —— 只构建并产出 artifact（用来随时验证代码能不能打包）
+#   · 推送 v* 标签 —— 构建后额外发一个 GitHub Release，把安装包附上去
+#   · 手动触发
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Windows x64 (NSIS)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 准备 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 准备 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # 缓存 ~/.cargo 与 src-tauri/target，避免每次都全量重编 Tauri
+      - name: 缓存 Rust 构建
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      # tauri.conf.json 里的 beforeBuildCommand 会自动跑 npm run build（tsc + vite）
+      - name: 打包（NSIS 安装包 + 免安装 exe）
+        run: npm run tauri build
+
+      - name: 收集产物
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist-release | Out-Null
+
+          # 免安装版：主程序 + 采集内核 DLL 必须放在一起
+          $exe = "src-tauri/target/release/process-audio-capture-ui.exe"
+          if (Test-Path $exe) { Copy-Item $exe dist-release/ }
+
+          $dllDir = "src-tauri/target/release/binaries"
+          if (Test-Path $dllDir) {
+            New-Item -ItemType Directory -Force -Path "dist-release/binaries" | Out-Null
+            Copy-Item "$dllDir/*.dll" "dist-release/binaries/"
+          }
+
+          # NSIS 安装包
+          $nsis = "src-tauri/target/release/bundle/nsis"
+          if (Test-Path $nsis) { Copy-Item "$nsis/*.exe" dist-release/ }
+
+          Get-ChildItem -Recurse dist-release | Select-Object -ExpandProperty FullName
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: ProcessAudioCaptureUI-windows-x64
+          path: dist-release/**
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 发布 Release（仅打标签时）
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-release/**
+          generate_release_notes: true
+          draft: false

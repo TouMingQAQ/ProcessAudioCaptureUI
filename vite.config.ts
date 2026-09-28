@@ -1,4 +1,7 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
+
+const entry = (name: string) => fileURLToPath(new URL(name, import.meta.url));
 
 // Tauri 期望一个固定端口的开发服务器
 export default defineConfig({
@@ -15,5 +18,12 @@ export default defineConfig({
     target: "chrome110",
     minify: "esbuild",
     sourcemap: false,
+    rollupOptions: {
+      // 两个窗口各是一个入口：主界面 + 悬浮球
+      input: {
+        main: entry("index.html"),
+        ball: entry("ball.html"),
+      },
+    },
   },
 });

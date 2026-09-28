@@ -1,0 +1,406 @@
+/* 悬浮球窗口：整页透明，只有小球与悬停面板可见。 */
+
+:root {
+  --pink: #ff8fb8;
+  --pink-soft: #ffd3e4;
+  --lav: #b8a4ea;
+  --mint: #7fd8c0;
+  --sky: #9fd4ff;
+  --ink: #5a4a5e;
+  --ink-dim: #9b8aa1;
+  --card: rgba(255, 253, 255, 0.94);
+  --line: rgba(255, 159, 196, 0.42);
+  --font: "Yu Gothic UI", "Microsoft YaHei UI", "PingFang SC", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+body.ball-body {
+  font-family: var(--font);
+  font-size: 12px;
+  color: var(--ink);
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+.stage {
+  position: fixed;
+  inset: 0;
+}
+
+/* ------------------------------------------------------------------ 小球 */
+
+.orb {
+  position: absolute;
+  /* 相对窗口右下角的偏移必须固定，展开时窗口向左上生长，
+     小球才能停在屏幕上的同一位置 */
+  right: 24px;
+  bottom: 24px;
+  width: 96px;
+  height: 96px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: grab;
+  transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1), filter 0.22s ease;
+  filter: drop-shadow(0 8px 18px rgba(255, 143, 184, 0.45));
+}
+
+.orb:hover {
+  transform: scale(1.06);
+}
+
+.orb:active {
+  cursor: grabbing;
+  transform: scale(0.97);
+}
+
+.orb canvas {
+  position: absolute;
+  inset: 0;
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  display: block;
+}
+
+.orb-glyph {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  color: var(--pink);
+  pointer-events: none;
+  opacity: 0.85;
+  transition: opacity 0.3s ease;
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.9);
+}
+
+/* 有音频时音符淡出，让位给跳动的中心圆点 */
+.stage.is-live .orb-glyph {
+  opacity: 0;
+}
+
+/* ------------------------------------------------------------------ 面板 */
+
+.panel {
+  position: absolute;
+  right: 24px;
+  /* 24（小球下边距）+ 96（小球直径）+ 12（间隙） */
+  bottom: 132px;
+  width: 300px;
+  opacity: 0;
+  transform: translateY(10px) scale(0.96);
+  transform-origin: 100% 100%;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.26s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+.stage.is-expanded .panel {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+
+.panel-inner {
+  position: relative;
+  padding: 13px 14px 11px;
+  border-radius: 22px;
+  border: 2px solid rgba(255, 255, 255, 0.95);
+  background: var(--card);
+  box-shadow: 0 14px 34px rgba(255, 143, 184, 0.32), 0 2px 0 rgba(255, 255, 255, 0.9) inset;
+  backdrop-filter: blur(10px);
+}
+
+/* 面板下方的小尾巴，指向小球 */
+.panel-inner::after {
+  content: "";
+  position: absolute;
+  right: 48px;
+  bottom: -9px;
+  width: 16px;
+  height: 16px;
+  background: var(--card);
+  border-right: 2px solid rgba(255, 255, 255, 0.95);
+  border-bottom: 2px solid rgba(255, 255, 255, 0.95);
+  transform: rotate(45deg);
+  border-radius: 0 0 4px 0;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 9px;
+}
+
+.kicker {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  color: var(--pink);
+}
+
+.mini-btn {
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1.5px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.mini-btn:hover {
+  background: #fff3f8;
+}
+
+.mini-btn:active {
+  transform: translateY(1px);
+}
+
+/* 主行：正在播放的内容（歌名 / 视频名），面板里最醒目的那行 */
+.now-title {
+  /* 固定两行高度，标题长短不一会让面板上下跳 */
+  height: 36px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 18px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* 次行：出声的进程名，一行足矣，超出省略 */
+.now-name {
+  margin-top: 3px;
+  height: 16px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--ink-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.chip {
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  color: var(--ink-dim);
+  background: rgba(184, 164, 234, 0.16);
+  border: 1px solid rgba(184, 164, 234, 0.28);
+  white-space: nowrap;
+}
+
+.chip.is-live {
+  color: #1f7a5f;
+  background: rgba(127, 216, 192, 0.22);
+  border-color: rgba(127, 216, 192, 0.5);
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-dim);
+  /* 帧数会越来越长（1,234,567 帧），换行会顶高面板 */
+  white-space: nowrap;
+}
+
+.meter-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.meter-label {
+  font-size: 10.5px;
+  color: var(--ink-dim);
+  flex: none;
+  white-space: nowrap;
+}
+
+.meter-track {
+  flex: 1;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(184, 164, 234, 0.18);
+  overflow: hidden;
+}
+
+.meter-fill {
+  display: block;
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #9fd4ff, #ff8fb8 60%, #ffb0d0);
+  transition: width 0.07s linear;
+}
+
+.meter-num {
+  /* "-100.0 dB" 也不会换行：固定宽度 + nowrap，避免文字长度变化把面板高度顶变 */
+  width: 58px;
+  text-align: right;
+  flex: none;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.candidate {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 9px;
+  padding: 6px 9px;
+  border-radius: 12px;
+  background: rgba(159, 212, 255, 0.16);
+  border: 1px dashed rgba(159, 212, 255, 0.6);
+  /* 没有候选源时只是"看不见"，位置照常占着，面板高度才不会跳 */
+  height: 30px;
+  visibility: visible;
+}
+
+.candidate.is-off {
+  visibility: hidden;
+}
+
+.candidate-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--sky);
+  box-shadow: 0 0 0 3px rgba(159, 212, 255, 0.25);
+  flex: none;
+  animation: blink 1.6s ease-in-out infinite;
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.candidate-text {
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: #3d6f9c;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 11px;
+}
+
+.pill-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  border: 1.5px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.16s ease, background 0.16s ease;
+}
+
+.pill-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(255, 143, 184, 0.28);
+}
+
+.pill-btn:active {
+  transform: translateY(1px);
+}
+
+.pill-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.pill-primary {
+  border-color: transparent;
+  background: linear-gradient(135deg, #ffa5c6, #c9a9f2);
+  color: #fff;
+  text-shadow: 0 1px 1px rgba(160, 90, 130, 0.25);
+}
+
+.pill-primary.is-stop {
+  background: linear-gradient(135deg, #ffb3b3, #ff8fb8);
+}
+
+.toggle-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(184, 164, 234, 0.45);
+  transition: background 0.16s ease, box-shadow 0.16s ease;
+}
+
+.toggle-btn[aria-pressed="true"] {
+  border-color: rgba(127, 216, 192, 0.75);
+  background: rgba(127, 216, 192, 0.16);
+}
+
+.toggle-btn[aria-pressed="true"] .toggle-dot {
+  background: var(--mint);
+  box-shadow: 0 0 0 3px rgba(127, 216, 192, 0.3);
+}
+
+.hint {
+  margin: 9px 0 0;
+  /* flashHint 会塞进很长的 WAV 路径，固定两行高度避免面板被撑开 */
+  height: 30px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--ink-dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-all;
+}
+
+

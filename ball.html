@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>音频小球</title>
+  </head>
+  <body class="ball-body">
+    <div id="stage" class="stage">
+      <section id="panel" class="panel" aria-hidden="true">
+        <div class="panel-inner">
+          <div class="panel-head">
+            <span class="kicker">♫ 正在监听</span>
+            <button id="btn-main" class="mini-btn" type="button">打开主界面</button>
+          </div>
+
+          <div class="now">
+            <div id="now-title" class="now-title">还没有开始采集</div>
+            <div id="now-name" class="now-name">
+              点下方按钮，小球会自动挑一个正在出声的窗口
+            </div>
+          </div>
+
+          <div class="meta-row">
+            <span id="now-state" class="chip">待机中</span>
+            <span id="now-frames" class="mono">—</span>
+          </div>
+
+          <div class="meter-row">
+            <span class="meter-label">音量</span>
+            <div class="meter-track"><i id="meter-fill" class="meter-fill"></i></div>
+            <span id="meter-text" class="mono meter-num">-∞</span>
+          </div>
+
+          <div id="candidate" class="candidate is-off">
+            <span class="candidate-dot"></span>
+            <span id="candidate-text" class="candidate-text"></span>
+          </div>
+
+          <div class="actions">
+            <button id="btn-capture" class="pill-btn pill-primary" type="button">开始采集</button>
+            <button id="btn-follow" class="pill-btn toggle-btn" type="button" aria-pressed="false">
+              <span class="toggle-dot"></span><span>自动跟随</span>
+            </button>
+          </div>
+
+          <p id="hint" class="hint">
+            自动跟随：当前窗口安静下来、别的窗口开始出声时，会自动切过去
+          </p>
+        </div>
+      </section>
+
+      <button id="orb" class="orb" type="button" aria-label="音频小球">
+        <canvas id="orb-canvas"></canvas>
+        <span class="orb-glyph">♪</span>
+      </button>
+    </div>
+
+    <script type="module" src="/src/ball.ts"></script>
+  </body>
+</html>

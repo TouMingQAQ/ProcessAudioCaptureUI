@@ -150,7 +150,7 @@ export class Visualizer {
     const amp = height * 0.46;
 
     // 中轴线 + 上下参考线
-    ctx.strokeStyle = "rgba(148, 163, 184, 0.16)";
+    ctx.strokeStyle = "rgba(184, 164, 234, 0.3)";
     ctx.lineWidth = 1;
     for (const y of [mid * 0.5, mid, mid * 1.5]) {
       ctx.beginPath();
@@ -160,14 +160,15 @@ export class Visualizer {
     }
 
     const gradient = ctx.createLinearGradient(0, 0, width, 0);
-    gradient.addColorStop(0, "rgba(34, 211, 238, 0.95)");
-    gradient.addColorStop(1, "rgba(167, 139, 250, 0.95)");
+    gradient.addColorStop(0, "rgba(159, 212, 255, 0.95)");
+    gradient.addColorStop(0.55, "rgba(201, 169, 242, 0.95)");
+    gradient.addColorStop(1, "rgba(255, 143, 184, 0.95)");
 
     const step = width / WAVE_BUCKETS;
     const barWidth = Math.max(step * 0.8, 1);
 
     ctx.fillStyle = gradient;
-    ctx.shadowColor = "rgba(103, 232, 249, 0.5)";
+    ctx.shadowColor = "rgba(255, 178, 208, 0.6)";
     ctx.shadowBlur = 6;
     ctx.beginPath();
     for (let i = 0; i < WAVE_BUCKETS; i++) {
@@ -190,7 +191,7 @@ export class Visualizer {
     const barWidth = Math.max(slot - gap, 1);
 
     // 横向 dB 参考线
-    ctx.strokeStyle = "rgba(148, 163, 184, 0.12)";
+    ctx.strokeStyle = "rgba(184, 164, 234, 0.22)";
     ctx.lineWidth = 1;
     for (let i = 1; i < 4; i++) {
       const y = Math.round((height / 4) * i) + 0.5;
@@ -201,9 +202,9 @@ export class Visualizer {
     }
 
     const gradient = ctx.createLinearGradient(0, height, 0, 0);
-    gradient.addColorStop(0, "rgba(34, 211, 238, 0.85)");
-    gradient.addColorStop(0.55, "rgba(56, 189, 248, 0.95)");
-    gradient.addColorStop(1, "rgba(167, 139, 250, 1)");
+    gradient.addColorStop(0, "rgba(159, 212, 255, 0.9)");
+    gradient.addColorStop(0.55, "rgba(201, 169, 242, 0.95)");
+    gradient.addColorStop(1, "rgba(255, 143, 184, 1)");
 
     ctx.fillStyle = gradient;
     for (let i = 0; i < SPECTRUM_BINS; i++) {
@@ -213,7 +214,7 @@ export class Visualizer {
     }
 
     // 峰值保持帽
-    ctx.fillStyle = "rgba(226, 232, 240, 0.85)";
+    ctx.fillStyle = "rgba(240, 105, 154, 0.85)";
     for (let i = 0; i < SPECTRUM_BINS; i++) {
       const y = height - this.peaks.at(i) * (height - 6) - 2;
       if (y < -2) continue;

@@ -18,7 +18,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use crate::dsp::{Analyzer, AudioFrame};
-use crate::pac::{PacAudioCallback, PacCaptureHandle, PacLibrary};
+use crate::pac::{PacAudioCallback, PacCaptureHandle, PacFormat, PacLibrary};
 use crate::wav::WavWriter;
 
 /// 前端监听的事件名。
@@ -71,8 +71,21 @@ impl ActiveCapture {
         self.started_at.elapsed()
     }
 
+    /// 内核是否仍认为采集线程在跑。为 `false` 说明流自己断了（不是我们停的）。
+    pub fn is_alive(&self) -> bool {
+        self.lib.is_capturing(self.handle).unwrap_or(true)
+    }
+
+    /// 采集线程自行结束时的错误码（`0` 表示仍在运行或正常停止）。
+    pub fn terminal_error(&self) -> i32 {
+        self.lib.capture_error(self.handle).unwrap_or(0)
+    }
+
     /// 停止采集：先让 DLL 停下（此后不会再触发回调），再让发射线程排空退出，最后回收内存。
-    pub fn stop(mut self, app: &AppHandle) -> StopReport {
+    ///
+    /// `notify` 为 `false` 时不广播 `pac://stopped` —— 自动跟随切换时会先停旧会话，
+    /// 那种情况不能让它看起来像"用户点了停止"。
+    pub fn stop(mut self, app: &AppHandle, notify: bool) -> StopReport {
         let mut warnings = Vec::new();
 
         // 1. 停止 DLL 侧采集。该调用会 join 采集线程，返回后不会再有任何回调。
@@ -111,7 +124,9 @@ impl ActiveCapture {
             warnings,
         };
 
-        let _ = app.emit(STOPPED_EVENT, &report);
+        if notify {
+            let _ = app.emit(STOPPED_EVENT, &report);
+        }
         report
     }
 }
@@ -162,32 +177,49 @@ pub fn start_capture(
     });
     let ctx_ptr = Box::into_raw(ctx);
 
-    // 发射线程：排空缓冲 → DSP → 事件推送 / 写盘
-    let started_at = Instant::now();
-    let emitter = spawn_emitter(
-        app.clone(),
-        Arc::clone(&queue),
-        Arc::clone(&counters),
-        Arc::clone(&stop_flag),
-        wav_path.clone(),
-        pid,
-        started_at,
-    );
-
     // SAFETY: 回调指针在会话存续期间不会移动，且我们保证在 stop 之后再释放。
     let (code, handle) = unsafe {
         lib.start_capture(pid, audio_callback as PacAudioCallback, ctx_ptr as *mut c_void)
     };
 
     if code != 0 || handle.is_null() {
-        // 启动失败：先关掉发射线程，再回收上下文内存
-        stop_flag.store(true, Ordering::SeqCst);
-        let _ = emitter.join();
+        // 启动失败：回收上下文内存即可，发射线程还没起来
         unsafe { drop(Box::from_raw(ctx_ptr)) };
 
         let detail = lib.describe(code);
         return Err(format!("启动 PID {pid} 的音频捕获失败：{detail}"));
     }
+
+    // 采集格式不用再等首帧回调 —— 内核把流格式固定成 48 kHz / 立体声 / float32
+    // 并如实报出来，所以界面上可以立刻显示真实采样率。
+    let format = match lib.capture_format(handle) {
+        Ok(format) => format,
+        Err(err) => {
+            unsafe { lib.stop_capture(handle) };
+            unsafe { drop(Box::from_raw(ctx_ptr)) };
+            return Err(err);
+        }
+    };
+    counters
+        .sample_rate
+        .store(format.sample_rate, Ordering::Relaxed);
+    counters
+        .channels
+        .store(format.channels as u32, Ordering::Relaxed);
+
+    // 发射线程：排空缓冲 → 内核 DSP → 事件推送 / 写盘
+    let started_at = Instant::now();
+    let emitter = spawn_emitter(
+        app.clone(),
+        Arc::clone(&lib),
+        Arc::clone(&queue),
+        Arc::clone(&counters),
+        Arc::clone(&stop_flag),
+        wav_path.clone(),
+        pid,
+        started_at,
+        format,
+    );
 
     Ok(ActiveCapture {
         pid,
@@ -250,24 +282,36 @@ unsafe extern "C" fn audio_callback(
 #[allow(clippy::too_many_arguments)]
 fn spawn_emitter(
     app: AppHandle,
+    lib: Arc<PacLibrary>,
     queue: Arc<Mutex<VecDeque<f32>>>,
     counters: Arc<SharedCounters>,
     stop_flag: Arc<AtomicBool>,
     wav_path: Option<PathBuf>,
     pid: u32,
     started_at: Instant,
+    format: PacFormat,
 ) -> JoinHandle<()> {
     thread::Builder::new()
         .name(format!("pac-emitter-{pid}"))
         .spawn(move || {
-            let mut analyzer = Analyzer::new();
+            // 分析器（FFT 计划 + 临时缓冲）由内核持有，整场采集复用同一个实例
+            let mut analyzer =
+                match Analyzer::new(Arc::clone(&lib), format.sample_rate, format.channels) {
+                    Ok(analyzer) => analyzer,
+                    Err(err) => {
+                        let _ = app.emit("pac://error", format!("初始化音频分析器失败：{err}"));
+                        return;
+                    }
+                };
+
+            let sample_rate = format.sample_rate;
+            let channels = format.channels.max(1) as usize;
             let mut scratch: Vec<f32> = Vec::with_capacity(65_536);
+            // 累积待分析的交错采样（降混与分析都在内核里做）
             let mut pending: Vec<f32> = Vec::with_capacity(65_536);
             let mut recorder: Option<WavWriter> = None;
             let mut recorder_failed = false;
-            let mut last_sample_rate = 0u32;
             let mut last_emit = Instant::now();
-            let mut pending_interleaved: Vec<f32> = Vec::new();
 
             loop {
                 // 1. 把缓冲里的数据搬到本地
@@ -279,19 +323,11 @@ fn spawn_emitter(
                     take
                 };
 
-                let channels = counters.channels.load(Ordering::Relaxed).max(1) as usize;
-                let sample_rate = counters.sample_rate.load(Ordering::Relaxed);
-
-                if sample_rate != 0 && sample_rate != last_sample_rate {
-                    last_sample_rate = sample_rate;
-                    analyzer.rebuild_bin_ranges(sample_rate as f32);
-                }
-
                 if drained > 0 {
-                    // 原始交错数据 → WAV
+                    // 原始交错数据直接写 WAV（保留原始声道，不降混）
                     if let Some(path) = wav_path.as_ref() {
-                        if recorder.is_none() && !recorder_failed && sample_rate != 0 {
-                            match WavWriter::create(path, sample_rate, channels as u16) {
+                        if recorder.is_none() && !recorder_failed {
+                            match WavWriter::create(path, sample_rate, format.channels) {
                                 Ok(w) => recorder = Some(w),
                                 Err(err) => {
                                     recorder_failed = true;
@@ -310,49 +346,40 @@ fn spawn_emitter(
                         }
                     }
 
-                    // 降混到单声道，累积到 pending
-                    if channels <= 1 {
-                        pending.extend_from_slice(&scratch);
-                    } else {
-                        pending_interleaved.clear();
-                        pending_interleaved.extend_from_slice(&scratch);
-                        let frames = pending_interleaved.len() / channels;
-                        let scale = 1.0 / channels as f32;
-                        pending.reserve(frames);
-                        for frame in 0..frames {
-                            let base = frame * channels;
-                            let mut sum = 0.0f32;
-                            for ch in 0..channels {
-                                sum += pending_interleaved[base + ch];
-                            }
-                            pending.push(sum * scale);
-                        }
-                    }
+                    pending.extend_from_slice(&scratch);
 
                     // 只保留最近 2 秒用于可视化，防止慢消费者拖垮内存
-                    let cap = (sample_rate as usize).max(48_000) * 2;
+                    let cap = sample_rate as usize * channels * 2;
                     if pending.len() > cap {
                         let excess = pending.len() - cap;
                         pending.drain(..excess);
                     }
                 }
 
-                // 2. 到点了就推一帧（未收到过数据时不推送，避免空转消耗 IPC）
+                // 2. 到点了就推一帧
                 if last_emit.elapsed() >= Duration::from_millis(EMIT_INTERVAL_MS) {
-                    if last_sample_rate != 0 {
-                        let frame: AudioFrame = analyzer.analyze(&pending, last_sample_rate);
-                        if app
-                            .emit(
-                                AUDIO_EVENT,
-                                FrameEnvelope {
-                                    pid,
-                                    frame,
-                                    total_frames: counters.total_frames.load(Ordering::Relaxed),
-                                    elapsed_ms: started_at.elapsed().as_millis() as u64,
-                                },
-                            )
-                            .is_err()
-                        {
+                    let frames = pending.len() / channels;
+                    match analyzer.analyze(&pending, frames) {
+                        Ok(frame) => {
+                            if app
+                                .emit(
+                                    AUDIO_EVENT,
+                                    FrameEnvelope {
+                                        pid,
+                                        frame,
+                                        total_frames: counters
+                                            .total_frames
+                                            .load(Ordering::Relaxed),
+                                        elapsed_ms: started_at.elapsed().as_millis() as u64,
+                                    },
+                                )
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        Err(err) => {
+                            let _ = app.emit("pac://error", format!("音频分析失败：{err}"));
                             break;
                         }
                     }
@@ -360,18 +387,18 @@ fn spawn_emitter(
                     last_emit = Instant::now();
                 }
 
-                // 3. 停止条件：DLL 已停 + 缓冲排空
+                // 3. 停止条件：内核已停 + 缓冲排空
                 if stop_flag.load(Ordering::SeqCst) && drained == 0 {
                     if let Some(mut w) = recorder.take() {
                         let _ = w.finalize();
                     }
-                    if last_sample_rate != 0 {
-                        let final_frame = analyzer.analyze(&pending, last_sample_rate);
+                    let frames = pending.len() / channels;
+                    if let Ok(frame) = analyzer.analyze(&pending, frames) {
                         let _ = app.emit(
                             AUDIO_EVENT,
                             FrameEnvelope {
                                 pid,
-                                frame: final_frame,
+                                frame,
                                 total_frames: counters.total_frames.load(Ordering::Relaxed),
                                 elapsed_ms: started_at.elapsed().as_millis() as u64,
                             },
