@@ -21,19 +21,16 @@
         <div class="brand">
           <div class="brand-mark" aria-hidden="true">♪</div>
           <div class="brand-text">
-            <h1>进程音频监听</h1>
-            <p>挑一个正在出声的程序 · 实时可视化 · 悬浮球与托盘常驻</p>
+            <h1 data-i18n="app.title">进程音频监听</h1>
+            <p data-i18n="app.tagline">挑一个正在出声的程序 · 实时可视化 · 悬浮球与托盘常驻</p>
           </div>
         </div>
 
+        <!-- 内核配置挪进了「设置 → 内核」，这里只留悬浮球开关 -->
         <div class="topbar-right">
-          <div id="dll-badge" class="badge badge-muted" title="">
-            <span class="dot"></span><span id="dll-badge-text">检测采集内核…</span>
-          </div>
           <button id="btn-ball" class="btn btn-ghost" type="button" aria-pressed="true">
             悬浮球 开
           </button>
-          <button id="btn-reload" class="btn btn-ghost" type="button">重新加载内核</button>
         </div>
       </header>
 
@@ -41,7 +38,7 @@
         <!-- 左：窗口选择 -->
         <section class="panel panel-list">
           <div class="panel-head">
-            <h2>♪ 可捕获音频的窗口</h2>
+            <h2 data-i18n="list.head">♪ 可捕获音频的窗口</h2>
             <span id="window-count" class="count">0</span>
           </div>
 
@@ -50,35 +47,48 @@
               id="search"
               class="input"
               type="search"
+              data-i18n-placeholder="list.search"
               placeholder="按窗口标题 / 进程名过滤…"
               autocomplete="off"
             />
-            <button id="btn-refresh" class="btn btn-ghost" type="button">刷新</button>
+            <button id="btn-refresh" class="btn btn-ghost" type="button" data-i18n="list.refresh">
+              刷新
+            </button>
           </div>
 
           <label class="switch">
             <input id="filter-audio" type="checkbox" />
-            <span>只看有音频会话的窗口</span>
+            <span data-i18n="list.onlyAudio">只看有音频会话的窗口</span>
           </label>
 
           <div id="window-list" class="window-list" role="listbox" aria-label="窗口列表">
-            <div class="empty">正在枚举窗口…</div>
+            <div class="empty" data-i18n="list.enumerating">正在枚举窗口…</div>
           </div>
 
           <div id="warnings" class="warnings" hidden></div>
+
+          <!-- 左下角：设置入口 -->
+          <footer class="panel-foot">
+            <button id="btn-settings" class="btn btn-ghost btn-settings" type="button">
+              <span class="gear" aria-hidden="true">⚙</span>
+              <span data-i18n="settings.open">设置</span>
+            </button>
+          </footer>
         </section>
 
         <!-- 右：可视化 -->
         <section class="panel panel-view">
           <div class="panel-head">
-            <h2>♫ 实时音频可视化</h2>
-            <span id="session-state" class="pill pill-idle">未采集</span>
+            <h2 data-i18n="view.head">♫ 实时音频可视化</h2>
+            <span id="session-state" class="pill pill-idle" data-i18n="session.idle">未采集</span>
           </div>
 
           <div id="now-capturing" class="now-capturing">
             <div class="nc-text">
-              <div class="nc-title">还没有选择窗口</div>
-              <div class="nc-sub">从左侧挑一个正在播放声音的窗口，然后点「开始采集」</div>
+              <div class="nc-title" data-i18n="view.pickTitle">还没有选择窗口</div>
+              <div class="nc-sub" data-i18n="view.pickSub">
+                从左侧挑一个正在播放声音的窗口，然后点「开始采集」
+              </div>
             </div>
             <button id="btn-capture" class="btn btn-primary" type="button" disabled>
               开始采集
@@ -88,17 +98,17 @@
           <div class="options-row">
             <label class="switch switch-inline">
               <input id="record-wav" type="checkbox" />
-              <span>顺便录成 WAV（存到「下载」目录）</span>
+              <span data-i18n="view.recordWav">顺便录成 WAV（存到「下载」目录）</span>
             </label>
             <label class="switch switch-inline">
               <input id="follow-main" type="checkbox" />
-              <span>自动跟随最响的窗口</span>
+              <span data-i18n="view.autoFollow">自动跟随最响的窗口</span>
             </label>
           </div>
 
           <div class="viz-block">
             <div class="viz-head">
-              <span>波形（峰谷包络）</span>
+              <span data-i18n="view.waveHead">波形（峰谷包络）</span>
               <span id="wave-meta" class="viz-meta">—</span>
             </div>
             <canvas id="canvas-wave" class="canvas canvas-wave"></canvas>
@@ -106,32 +116,227 @@
 
           <div class="viz-block">
             <div class="viz-head">
-              <span>频谱（20 Hz → Nyquist，对数轴）</span>
+              <span data-i18n="view.specHead">频谱（20 Hz → Nyquist，对数轴）</span>
               <span id="spec-meta" class="viz-meta">—</span>
             </div>
             <canvas id="canvas-spectrum" class="canvas canvas-spectrum"></canvas>
           </div>
 
+          <!-- 电平表：只留 RMS 与峰值，监听帧数 / 已运行时长不再展示 -->
           <div class="meters">
             <div class="meter">
-              <div class="meter-label">RMS 平均</div>
+              <div class="meter-label" data-i18n="view.rms">RMS 平均</div>
               <div class="meter-track"><div id="meter-rms" class="meter-fill meter-rms"></div></div>
               <div id="meter-rms-text" class="meter-text">-∞ dB</div>
             </div>
             <div class="meter">
-              <div class="meter-label">峰值</div>
+              <div class="meter-label" data-i18n="view.peak">峰值</div>
               <div class="meter-track"><div id="meter-peak" class="meter-fill meter-peak"></div></div>
               <div id="meter-peak-text" class="meter-text">-∞ dB</div>
-            </div>
-            <div class="meter meter-stats">
-              <div class="meter-label">当前监听</div>
-              <div id="stats-text" class="stats-text">—</div>
             </div>
           </div>
 
           <div id="log" class="log" aria-live="polite"></div>
         </section>
       </main>
+    </div>
+
+    <!-- 设置面板：默认整个藏起来，左下角按钮打开 -->
+    <div id="settings" class="settings" hidden>
+      <div id="settings-scrim" class="settings-scrim"></div>
+
+      <section
+        class="settings-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-title"
+      >
+        <header class="settings-head">
+          <h2 id="settings-title" data-i18n="settings.open">设置</h2>
+          <button id="settings-close" class="btn btn-ghost" type="button" data-i18n="settings.close">
+            关闭
+          </button>
+        </header>
+
+        <div class="settings-body">
+          <nav class="settings-tabs" role="tablist">
+            <button class="settings-tab is-active" type="button" data-tab="general" role="tab">
+              <span class="tab-glyph" aria-hidden="true">☰</span>
+              <span data-i18n="settings.tab.general">通用</span>
+            </button>
+            <button class="settings-tab" type="button" data-tab="theme" role="tab">
+              <span class="tab-glyph" aria-hidden="true">◐</span>
+              <span data-i18n="settings.tab.theme">主题</span>
+            </button>
+            <button class="settings-tab" type="button" data-tab="kernel" role="tab">
+              <span class="tab-glyph" aria-hidden="true">⛭</span>
+              <span data-i18n="settings.tab.kernel">内核</span>
+            </button>
+          </nav>
+
+          <div class="settings-panes">
+            <!-- ---------------------------------------------------- 通用 -->
+            <div class="settings-pane is-active" data-pane="general">
+              <section class="set-block">
+                <div class="set-block-head">
+                  <h3 data-i18n="settings.general.language">语言</h3>
+                  <p data-i18n="settings.general.languageHint">
+                    主界面、悬浮球与托盘菜单的语言。
+                  </p>
+                </div>
+                <div id="language-group" class="segmented" role="group">
+                  <button class="seg" type="button" data-lang="zh-CN">简体中文</button>
+                  <button class="seg" type="button" data-lang="en-US">English</button>
+                </div>
+              </section>
+
+              <section class="set-block">
+                <div class="set-block-head">
+                  <h3 data-i18n="settings.general.behaviour">行为</h3>
+                </div>
+                <label class="switch switch-block">
+                  <input id="set-auto-follow" type="checkbox" />
+                  <span data-i18n="settings.general.autoFollow">启动时自动跟随最响的窗口</span>
+                </label>
+                <p class="set-note" data-i18n="settings.general.autoFollowHint">
+                  开启后，当前窗口安静下来、别的窗口开始出声时会自动切过去。
+                </p>
+
+                <label class="switch switch-block">
+                  <input id="set-record-wav" type="checkbox" />
+                  <span data-i18n="settings.general.recordWav">采集时默认录制 WAV</span>
+                </label>
+                <p class="set-note" data-i18n="settings.general.recordWavHint">
+                  主界面上的「顺便录成 WAV」会跟着这个开关走，文件存在「下载」目录。
+                </p>
+              </section>
+
+              <p class="set-note set-note-quiet" data-i18n="settings.general.trayNote">
+                主界面点 × 只会收进托盘，采集与悬浮球继续在后台跑；要彻底退出请用托盘菜单的「退出」。
+              </p>
+            </div>
+
+            <!-- ---------------------------------------------------- 主题 -->
+            <div class="settings-pane" data-pane="theme">
+              <section class="set-block">
+                <div class="set-block-head">
+                  <h3 data-i18n="settings.theme.mode">深色模式</h3>
+                  <p data-i18n="settings.theme.modeHint">
+                    决定下面两套主题用白天还是黑夜的那一份预览，同时作用于主界面与悬浮球。
+                  </p>
+                </div>
+                <div id="theme-mode-group" class="segmented" role="group">
+                  <button class="seg" type="button" data-mode="light" data-i18n="settings.theme.mode.light">
+                    浅色
+                  </button>
+                  <button class="seg" type="button" data-mode="dark" data-i18n="settings.theme.mode.dark">
+                    深色
+                  </button>
+                  <button class="seg" type="button" data-mode="system" data-i18n="settings.theme.mode.system">
+                    跟随系统
+                  </button>
+                </div>
+              </section>
+
+              <section class="set-block">
+                <div class="set-block-head is-row">
+                  <div>
+                    <h3 data-i18n="settings.theme.app">应用主题</h3>
+                    <p data-i18n="settings.theme.appHint">
+                      每张卡片左边是浅色、右边是深色，点一下立即生效。
+                    </p>
+                  </div>
+                  <button id="theme-reset" class="btn btn-ghost" type="button" data-i18n="settings.theme.reset">
+                    恢复默认
+                  </button>
+                </div>
+                <div id="app-theme-grid" class="theme-grid"></div>
+              </section>
+
+              <section class="set-block">
+                <div class="set-block-head">
+                  <h3 data-i18n="settings.theme.ball">悬浮球配色</h3>
+                  <p data-i18n="settings.theme.ballHint">
+                    只管颜色：小球与悬停面板的用色。形状由下面的「律动样式」决定。
+                  </p>
+                </div>
+                <div id="ball-theme-grid" class="theme-grid"></div>
+              </section>
+
+              <section class="set-block">
+                <div class="set-block-head">
+                  <h3 data-i18n="settings.theme.style">律动样式</h3>
+                  <p data-i18n="settings.theme.styleHint">
+                    只管形状：小球长什么样、怎么跟着音乐动。颜色与上面的配色自由组合。
+                  </p>
+                </div>
+                <div id="ball-style-grid" class="style-grid"></div>
+              </section>
+
+              <section class="set-block">
+                <div class="set-block-head">
+                  <h3 data-i18n="settings.theme.ballSource">律动数据</h3>
+                  <p data-i18n="settings.theme.ballSourceHint">
+                    小球读哪一份数据来律动：内核的 128 柱对数频谱，或 256 点峰谷包络波形。
+                  </p>
+                </div>
+                <div id="ball-source-row" class="set-row">
+                  <div id="ball-source-group" class="segmented" role="group">
+                    <button class="seg" type="button" data-source="spectrum" data-i18n="settings.theme.ballSource.spectrum">
+                      频谱
+                    </button>
+                    <button class="seg" type="button" data-source="wave" data-i18n="settings.theme.ballSource.wave">
+                      波形
+                    </button>
+                    <button class="seg" type="button" data-source="adaptive" data-i18n="settings.theme.ballSource.adaptive">
+                      自适应
+                    </button>
+                  </div>
+                </div>
+                <p id="ball-source-note" class="set-note"></p>
+              </section>
+            </div>
+
+            <!-- ---------------------------------------------------- 内核 -->
+            <div class="settings-pane" data-pane="kernel">
+              <section class="set-block">
+                <div class="set-block-head is-row">
+                  <div>
+                    <h3 data-i18n="settings.kernel.status">状态</h3>
+                    <p data-i18n="settings.kernel.hint">
+                      采集内核（ProcessAudioCapture.dll）需要 v3 及以上；换成旧版会提示版本过旧，目标枚举会直接报错。
+                    </p>
+                  </div>
+                  <button id="btn-kernel-reload" class="btn" type="button" data-i18n="settings.kernel.reload">
+                    重新加载内核
+                  </button>
+                </div>
+
+                <div id="kn-status" class="kn-status">
+                  <span id="kn-status-dot" class="kn-dot"></span>
+                  <span id="kn-status-text">检测采集内核…</span>
+                </div>
+
+                <dl class="kn-table">
+                  <dt data-i18n="settings.kernel.version">内核版本</dt>
+                  <dd id="kn-version">—</dd>
+                  <dt data-i18n="settings.kernel.path">当前加载</dt>
+                  <dd id="kn-path" class="kn-mono">—</dd>
+                  <dt data-i18n="settings.kernel.expected">期望目录</dt>
+                  <dd id="kn-expected" class="kn-mono">—</dd>
+                </dl>
+
+                <div class="kn-candidates-block">
+                  <div class="kn-candidates-head" data-i18n="settings.kernel.candidates">
+                    候选路径（按优先级）
+                  </div>
+                  <ul id="kn-candidates" class="kn-candidates"></ul>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
 
     <script type="module" src="/src/main.ts"></script>

@@ -11,6 +11,8 @@
 //! * `set_auto_follow`     —— 自动跟随开关
 //! * `set_ball_visible`    —— 显示 / 隐藏悬浮球（展开收起见 [`ball`]）
 //! * `show_main_window`    —— 唤起主窗口
+//! * `get_settings`        —— 读取界面偏好（主题 / 语言 / 默认开关）
+//! * `save_settings`       —— 保存界面偏好并广播给所有窗口
 //!
 //! 另外还有一个系统托盘图标（见 [`tray`]），提供和悬浮球同款的功能菜单。
 
@@ -19,6 +21,7 @@ mod capture;
 mod dsp;
 mod monitor;
 mod pac;
+mod prefs;
 mod sessions;
 mod tray;
 mod wav;
@@ -31,6 +34,7 @@ use tauri::{AppHandle, Manager, PhysicalPosition, State, WebviewWindow};
 
 use capture::{ActiveCapture, StartReport, StopReport};
 use pac::PacLibrary;
+use prefs::Settings;
 use sessions::WindowListResult;
 
 /// 悬浮球窗口的逻辑尺寸 —— **恒定**，不随展开收起变化。
@@ -360,9 +364,46 @@ async fn stop_capture(
 }
 
 #[tauri::command]
-fn set_auto_follow(state: State<'_, AppState>, enabled: bool) -> bool {
+fn set_auto_follow(app: AppHandle, state: State<'_, AppState>, enabled: bool) -> bool {
     state.auto_follow.store(enabled, Ordering::Relaxed);
+    persist_auto_follow(&app, enabled);
     enabled
+}
+
+/* -------------------------------------------------------------- 界面偏好 */
+
+/// 自动跟随是个"到处都能改"的开关（主界面、悬浮球、托盘菜单），
+/// 改完都往设置文件里回写一份，重启后才记得住。
+pub(crate) fn persist_auto_follow(app: &AppHandle, enabled: bool) {
+    let mut settings = prefs::load(app);
+    if settings.auto_follow != enabled {
+        settings.auto_follow = enabled;
+        if let Err(err) = prefs::store(app, &settings) {
+            eprintln!("[ProcessAudioCapture] {err}");
+        }
+    }
+}
+
+#[tauri::command]
+fn get_settings(app: AppHandle) -> Settings {
+    prefs::load(&app)
+}
+
+/// 保存设置：先落盘，再广播。落盘失败就直接返回错误，界面不会误以为已经存住。
+#[tauri::command]
+fn save_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    settings: Settings,
+) -> Result<Settings, String> {
+    prefs::store(&app, &settings)?;
+
+    // 这两个开关的真身在 AppState 上（采集线程 / 自动跟随都要读），顺手同步过去
+    state.auto_follow.store(settings.auto_follow, Ordering::Relaxed);
+    state.record_wav.store(settings.record_wav, Ordering::Relaxed);
+
+    prefs::broadcast(&app, &settings);
+    Ok(settings)
 }
 
 /* -------------------------------------------------------------- 悬浮球窗口 */
@@ -470,6 +511,14 @@ pub fn run() {
                 }
             }
 
+            // 上次的偏好：自动跟随 / 默认录 WAV 要先进状态机，界面还没起来就得生效
+            {
+                let settings = prefs::load(&handle);
+                let state = app.state::<AppState>();
+                state.auto_follow.store(settings.auto_follow, Ordering::Relaxed);
+                state.record_wav.store(settings.record_wav, Ordering::Relaxed);
+            }
+
             // 悬浮球定位后显示，避免先出现在左上角再跳过去
             if let Some(ball) = app.get_webview_window("ball") {
                 place_ball(&ball);
@@ -495,7 +544,9 @@ pub fn run() {
             stop_capture,
             set_auto_follow,
             set_ball_visible,
-            show_main_window
+            show_main_window,
+            get_settings,
+            save_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

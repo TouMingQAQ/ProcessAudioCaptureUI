@@ -10,24 +10,28 @@
       <section id="panel" class="panel" aria-hidden="true">
         <div class="panel-inner">
           <div class="panel-head">
-            <span class="kicker">♫ 正在监听</span>
-            <button id="btn-main" class="mini-btn" type="button">打开主界面</button>
+            <span class="kicker" data-i18n="ballWindow.kicker">♫ 正在监听</span>
+            <button id="btn-main" class="mini-btn" type="button" data-i18n="ballWindow.openMain">
+              打开主界面
+            </button>
           </div>
 
           <div class="now">
-            <div id="now-title" class="now-title">还没有开始采集</div>
-            <div id="now-name" class="now-name">
+            <div id="now-title" class="now-title" data-i18n="ballWindow.idleTitle">
+              还没有开始采集
+            </div>
+            <div id="now-name" class="now-name" data-i18n="ballWindow.idleSub">
               点下方按钮，小球会自动挑一个正在出声的窗口
             </div>
           </div>
 
+          <!-- 帧数不再展示，这里只留状态 -->
           <div class="meta-row">
-            <span id="now-state" class="chip">待机中</span>
-            <span id="now-frames" class="mono">—</span>
+            <span id="now-state" class="chip" data-i18n="ballWindow.idleState">待机中</span>
           </div>
 
           <div class="meter-row">
-            <span class="meter-label">音量</span>
+            <span class="meter-label" data-i18n="ballWindow.volume">音量</span>
             <div class="meter-track"><i id="meter-fill" class="meter-fill"></i></div>
             <span id="meter-text" class="mono meter-num">-∞</span>
           </div>
@@ -40,11 +44,12 @@
           <div class="actions">
             <button id="btn-capture" class="pill-btn pill-primary" type="button">开始采集</button>
             <button id="btn-follow" class="pill-btn toggle-btn" type="button" aria-pressed="false">
-              <span class="toggle-dot"></span><span>自动跟随</span>
+              <span class="toggle-dot"></span>
+              <span data-i18n="ballWindow.follow">自动跟随</span>
             </button>
           </div>
 
-          <p id="hint" class="hint">
+          <p id="hint" class="hint" data-i18n="follow.chip">
             自动跟随：当前窗口安静下来、别的窗口开始出声时，会自动切过去
           </p>
         </div>

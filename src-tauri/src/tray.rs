@@ -185,6 +185,8 @@ fn toggle_auto_follow(app: &AppHandle) {
         let state = app.state::<AppState>();
         let next = !state.auto_follow();
         state.auto_follow.store(next, Ordering::Relaxed);
+        // 托盘里改过也要写回设置文件，否则重启就丢了
+        crate::persist_auto_follow(app, next);
         next
     };
 

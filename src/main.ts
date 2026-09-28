@@ -12,8 +12,12 @@ import {
   type CaptureChanged,
   type DllStatus,
   type MonitorTick,
+  type Settings,
   type StopReport,
 } from "./api";
+import { applyI18n, t } from "./i18n";
+import { bindSettings } from "./settings";
+import { createSettingsPanel, type SettingsPanel } from "./settings-panel";
 import { Visualizer, formatDb } from "./visualizer";
 
 /* ---------------------------------------------------------------- DOM 引用 */
@@ -24,11 +28,9 @@ const $ = <T extends HTMLElement>(id: string): T => {
   return el as T;
 };
 
-const dllBadge = $<HTMLDivElement>("dll-badge");
-const dllBadgeText = $<HTMLSpanElement>("dll-badge-text");
-const btnReload = $<HTMLButtonElement>("btn-reload");
 const btnRefresh = $<HTMLButtonElement>("btn-refresh");
 const btnBall = $<HTMLButtonElement>("btn-ball");
+const btnSettings = $<HTMLButtonElement>("btn-settings");
 const btnCapture = $<HTMLButtonElement>("btn-capture");
 const followMain = $<HTMLInputElement>("follow-main");
 const searchInput = $<HTMLInputElement>("search");
@@ -45,7 +47,6 @@ const meterRms = $<HTMLDivElement>("meter-rms");
 const meterPeak = $<HTMLDivElement>("meter-peak");
 const meterRmsText = $<HTMLDivElement>("meter-rms-text");
 const meterPeakText = $<HTMLDivElement>("meter-peak-text");
-const statsText = $<HTMLDivElement>("stats-text");
 const logBox = $<HTMLDivElement>("log");
 
 const visualizer = new Visualizer(
@@ -55,13 +56,20 @@ const visualizer = new Visualizer(
 
 /* ------------------------------------------------------------------- 状态 */
 
+const prefs = bindSettings("app");
+
+let settings: Settings = prefs.get();
+let panel: SettingsPanel | null = null;
+let lastDllStatus: DllStatus | null = null;
+
 let allWindows: AudioWindowInfo[] = [];
 let selectedPid: number | null = null;
 let capturingPid: number | null = null;
-let lastFrame: AudioFrameEvent | null = null;
-let lastDllStatus: DllStatus | null = null;
 let autoFollow = false;
 let ballVisible = true;
+/** 当前会话状态（文案跟着语言变，所以要记住键而不是记住字符串）。 */
+let sessionKey: "session.idle" | "session.live" | "session.failed" = "session.idle";
+let sessionCls = "pill-idle";
 
 /* ------------------------------------------------------------------- 日志 */
 
@@ -80,19 +88,8 @@ function log(message: string, kind: "info" | "warn" | "error" = "info") {
 
 function renderDllStatus(status: DllStatus) {
   lastDllStatus = status;
-  dllBadge.classList.remove("badge-muted", "badge-ok", "badge-error");
-
-  if (status.loaded) {
-    dllBadge.classList.add("badge-ok");
-    dllBadgeText.textContent = `采集内核 v${status.version} 已就绪`;
-    dllBadge.title = status.path ?? "";
-  } else {
-    dllBadge.classList.add("badge-error");
-    dllBadgeText.textContent = "采集内核未就绪";
-    dllBadge.title = status.error ?? "";
-  }
-
   btnCapture.disabled = !status.loaded || selectedPid === null;
+  panel?.syncKernel(status);
 }
 
 async function refreshDllStatus(reload: boolean) {
@@ -100,13 +97,13 @@ async function refreshDllStatus(reload: boolean) {
     const status = reload ? await api.reloadDll() : await api.dllStatus();
     renderDllStatus(status);
     if (status.loaded) {
-      log(`采集内核已就绪：${status.path}（版本 ${status.version}）`);
+      log(t("kernel.reloaded", { path: status.path ?? "—", version: status.version }));
     } else {
-      log(status.error ?? "DLL 未加载", "error");
-      log(`请把 ProcessAudioCapture.dll 放到：${status.expectedDir}`, "warn");
+      log(status.error ? t("kernel.notLoaded") : t("kernel.missing"), "error");
+      log(t("kernel.placeHint", { dir: status.expectedDir }), "warn");
     }
   } catch (err) {
-    log(`查询 DLL 状态失败：${String(err)}`, "error");
+    log(t("kernel.queryFailed", { err: String(err) }), "error");
   }
 }
 
@@ -115,13 +112,13 @@ async function refreshDllStatus(reload: boolean) {
 function sessionLabel(win: AudioWindowInfo): string {
   switch (win.sessionState) {
     case "active":
-      return "正在播放";
+      return t("session.active");
     case "inactive":
-      return "会话空闲";
+      return t("session.inactive");
     case "expired":
-      return "会话已失效";
+      return t("session.expired");
     default:
-      return "无音频会话";
+      return t("session.none");
   }
 }
 
@@ -139,13 +136,13 @@ function renderWindowList() {
     );
   });
 
-  windowCount.textContent = `${list.length} / ${allWindows.length}`;
+  windowCount.textContent = t("list.count", { shown: list.length, total: allWindows.length });
   windowList.replaceChildren();
 
   if (list.length === 0) {
     const empty = document.createElement("div");
     empty.className = "empty";
-    empty.textContent = allWindows.length === 0 ? "没有找到可捕获的窗口" : "没有匹配的窗口";
+    empty.textContent = allWindows.length === 0 ? t("list.none") : t("list.noMatch");
     windowList.append(empty);
     return;
   }
@@ -178,13 +175,13 @@ function renderWindowList() {
 
     item.querySelector(".win-title")!.textContent = win.title;
     const procEl = item.querySelector(".win-proc")!;
-    procEl.textContent = win.processName || "未知进程";
+    procEl.textContent = win.processName || t("list.unknownProcess");
     if (!win.windowVisible) {
       // 没有窗口的进程（播放器缩在托盘里），标题是从系统媒体信息取的，标一下免得困惑
       const badge = document.createElement("span");
       badge.className = "win-badge";
-      badge.textContent = "托盘";
-      badge.title = "该进程没有可见窗口，标题来自系统媒体信息（SMTC）";
+      badge.textContent = t("list.trayBadge");
+      badge.title = t("list.trayBadgeTitle");
       procEl.after(badge);
     }
     item.querySelector(".win-state")!.textContent = sessionLabel(win);
@@ -195,30 +192,36 @@ function renderWindowList() {
   windowList.append(frag);
 }
 
-function selectWindow(pid: number | null) {
-  if (capturingPid !== null && pid !== capturingPid) {
-    log("请先停止当前采集再切换窗口", "warn");
-    return;
-  }
-  selectedPid = pid;
-  const win = allWindows.find((w) => w.pid === pid) ?? null;
-
+function renderSelected() {
+  const win = allWindows.find((w) => w.pid === selectedPid) ?? null;
   const title = nowCapturing.querySelector(".nc-title")!;
   const sub = nowCapturing.querySelector(".nc-sub")!;
   if (win) {
     title.textContent = `${win.processName} — ${win.title}`;
-    sub.textContent = `PID ${win.pid} · ${sessionLabel(win)} · 会话峰值 ${(win.sessionPeak * 100).toFixed(1)}%`;
+    sub.textContent = t("view.pickedSub", {
+      pid: win.pid,
+      state: sessionLabel(win),
+      peak: (win.sessionPeak * 100).toFixed(1),
+    });
   } else {
-    title.textContent = "尚未选择窗口";
-    sub.textContent = '从左侧列表选择一个正在播放声音的窗口，然后点击"开始采集"';
+    title.textContent = t("view.selected");
+    sub.textContent = t("view.selectedSub");
   }
+  btnCapture.disabled = !(lastDllStatus?.loaded ?? false) || selectedPid === null;
+}
 
-  btnCapture.disabled = !(lastDllStatus?.loaded ?? false) || pid === null;
+function selectWindow(pid: number | null) {
+  if (capturingPid !== null && pid !== capturingPid) {
+    log(t("list.stopFirst"), "warn");
+    return;
+  }
+  selectedPid = pid;
+  renderSelected();
   renderWindowList();
 }
 
 async function refreshWindows() {
-  windowList.innerHTML = '<div class="empty">正在枚举窗口…</div>';
+  windowList.innerHTML = `<div class="empty">${t("list.enumerating")}</div>`;
   try {
     const result = await api.listWindows();
     allWindows = result.windows;
@@ -230,10 +233,10 @@ async function refreshWindows() {
       selectWindow(null);
     }
     renderWindowList();
-    log(`枚举到 ${allWindows.length} 个可见窗口`);
+    log(t("list.enumerated", { n: allWindows.length }));
   } catch (err) {
-    windowList.innerHTML = '<div class="empty">枚举窗口失败</div>';
-    log(`枚举窗口失败：${String(err)}`, "error");
+    windowList.innerHTML = `<div class="empty">${t("list.enumerateFailed")}</div>`;
+    log(t("list.enumerateFailedLog", { err: String(err) }), "error");
   }
 }
 
@@ -243,41 +246,43 @@ async function startCapture() {
   if (selectedPid === null) return;
   const win = allWindows.find((w) => w.pid === selectedPid);
   btnCapture.disabled = true;
-  btnCapture.textContent = "激活中…";
+  btnCapture.textContent = t("view.capturing");
 
   try {
     const report = await api.startCapture(selectedPid, win?.processName ?? "", recordWav.checked);
     capturingPid = report.pid;
-    lastFrame = null;
     visualizer.reset();
-    setSessionState("采集进行中", "pill-live");
-    btnCapture.textContent = "停止采集";
+    setSessionState("session.live", "pill-live");
+    btnCapture.textContent = t("view.stop");
     btnCapture.disabled = false;
     btnCapture.classList.remove("btn-primary");
     btnCapture.classList.add("btn-danger");
     log(
-      `开始采集 ${report.processName} (PID ${report.pid})，格式 ${report.sampleRate || "?"} Hz / ${
-        report.channels || "?"
-      } 声道`,
+      t("capture.started", {
+        name: report.processName,
+        pid: report.pid,
+        rate: report.sampleRate || "?",
+        channels: report.channels || "?",
+      }),
     );
-    if (report.wavPath) log(`录制中：${report.wavPath}`);
+    if (report.wavPath) log(t("capture.recording", { path: report.wavPath }));
     report.warnings.forEach((w) => log(w, "warn"));
   } catch (err) {
-    setSessionState("采集失败", "pill-error");
-    btnCapture.textContent = "开始采集";
+    setSessionState("session.failed", "pill-error");
+    btnCapture.textContent = t("view.capture");
     btnCapture.disabled = false;
-    log(`启动采集失败：${String(err)}`, "error");
+    log(t("capture.startFailed", { err: String(err) }), "error");
   }
 }
 
 async function stopCapture() {
   btnCapture.disabled = true;
-  btnCapture.textContent = "停止中…";
+  btnCapture.textContent = t("view.stopping");
   try {
     const report = await api.stopCapture();
     handleStopped(report);
   } catch (err) {
-    log(`停止采集失败：${String(err)}`, "error");
+    log(t("capture.stopFailed", { err: String(err) }), "error");
   } finally {
     btnCapture.disabled = false;
   }
@@ -285,74 +290,68 @@ async function stopCapture() {
 
 function handleStopped(report: StopReport | null) {
   capturingPid = null;
-  setSessionState("未采集", "pill-idle");
-  btnCapture.textContent = "开始采集";
+  setSessionState("session.idle", "pill-idle");
+  btnCapture.textContent = t("view.capture");
   btnCapture.classList.add("btn-primary");
   btnCapture.classList.remove("btn-danger");
   btnCapture.disabled = !(lastDllStatus?.loaded ?? false) || selectedPid === null;
   visualizer.reset();
   renderWindowList();
+  refreshTexts();
 
   if (!report) {
-    log("没有正在进行的采集");
+    log(t("capture.nothing"));
     return;
   }
 
-  const seconds = report.durationMs / 1000;
   log(
-    `已停止：${report.processName} · 共 ${report.totalFrames.toLocaleString()} 帧 / ${seconds.toFixed(
-      1,
-    )} 秒 · ${report.sampleRate} Hz ${report.channels}ch`,
+    t("capture.stopped", {
+      name: report.processName,
+      frames: report.totalFrames.toLocaleString(),
+      seconds: (report.durationMs / 1000).toFixed(1),
+      rate: report.sampleRate,
+      channels: report.channels,
+    }),
   );
   if (report.droppedSamples > 0) {
-    log(`因缓冲溢出丢弃了 ${report.droppedSamples.toLocaleString()} 个采样`, "warn");
+    log(t("capture.dropped", { n: report.droppedSamples.toLocaleString() }), "warn");
   }
   if (report.wavPath) {
-    log(`WAV 已保存：${report.wavPath}`);
+    log(t("capture.wavSaved", { path: report.wavPath }));
   } else if (recordWav.checked) {
-    log("未生成 WAV（可能未收到任何音频数据）", "warn");
+    log(t("capture.wavMissing"), "warn");
   }
   report.warnings.forEach((w) => log(w, "warn"));
 }
 
-function setSessionState(text: string, cls: string) {
-  sessionState.textContent = text;
+function setSessionState(key: typeof sessionKey, cls: string) {
+  sessionKey = key;
+  sessionCls = cls;
+  sessionState.textContent = t(key);
   sessionState.className = `pill ${cls}`;
 }
 
 /* ------------------------------------------------------------ 事件与初始化 */
 
-function updateMeters(rms: number, peak: number, stale: boolean) {
+function updateMeters(rms: number, peak: number) {
   const scale = (v: number) => Math.min(Math.pow(v, 0.45), 1) * 100;
   meterRms.style.width = `${scale(rms).toFixed(1)}%`;
   meterPeak.style.width = `${scale(peak).toFixed(1)}%`;
   meterRmsText.textContent = formatDb(rms);
   meterPeakText.textContent = formatDb(peak);
   meterRms.classList.toggle("is-hot", peak > 0.98);
-
-  const frame = lastFrame;
-  if (!frame || stale) {
-    if (capturingPid === null) statsText.textContent = "—";
-    return;
-  }
-  const seconds = frame.elapsedMs / 1000;
-  statsText.textContent = `${frame.totalFrames.toLocaleString()} 帧 · ${seconds.toFixed(
-    1,
-  )}s · ${frame.windowMs.toFixed(0)}ms/帧`;
-  waveMeta.textContent = `${frame.waveform.length} 点包络`;
-  specMeta.textContent = `${frame.spectrum.length} 柱`;
 }
 
 /* ------------------------------------------------- 实时扫描 / 悬浮球联动 */
 
 function syncBallButton() {
-  btnBall.textContent = `悬浮球 ${ballVisible ? "开" : "关"}`;
+  btnBall.textContent = ballVisible ? t("ball.toggle.on") : t("ball.toggle.off");
   btnBall.setAttribute("aria-pressed", String(ballVisible));
 }
 
 /**
  * 后端每 1.2 秒扫一次音频会话，这里把「当前监听窗口」的信息实时反映到界面上 ——
- * 音乐软件切歌时窗口标题会跟着变。
+ * 音乐软件切歌时窗口标题会跟着变。帧数 / 已运行时长不再展示。
  */
 function applyTick(tick: MonitorTick) {
   if (tick.autoFollow !== autoFollow) {
@@ -361,7 +360,7 @@ function applyTick(tick: MonitorTick) {
   }
   if (!tick.active || capturingPid === null) return;
 
-  const name = tick.capturing?.processName ?? tick.processName ?? "未知进程";
+  const name = tick.capturing?.processName ?? tick.processName ?? t("list.unknownProcess");
   const title = tick.capturing?.title?.trim() ?? "";
   const media = tick.media;
   const titleEl = nowCapturing.querySelector(".nc-title");
@@ -370,22 +369,51 @@ function applyTick(tick: MonitorTick) {
   if (titleEl) titleEl.textContent = media?.title || title || name;
   if (subEl) {
     const who = media?.artist ? `${media.artist} · ${name}` : name;
-    subEl.textContent = `${who} · PID ${tick.pid} · ${tick.sampleRate || "?"} Hz / ${
-      tick.channels || "?"
-    } 声道 · ${tick.totalFrames.toLocaleString()} 帧`;
+    subEl.textContent = t("capture.tickSub", {
+      who,
+      pid: tick.pid ?? "—",
+      rate: tick.sampleRate || "?",
+      channels: tick.channels || "?",
+    });
   }
 }
 
-async function bootstrap() {
-  visualizer.onRender = updateMeters;
+/** 语言变化后，把动态生成过的文案全部重刷一遍。 */
+function refreshTexts() {
+  applyI18n();
   syncBallButton();
+  sessionState.textContent = t(sessionKey);
+  sessionState.className = `pill ${sessionCls}`;
+  btnCapture.textContent = capturingPid !== null ? t("view.stop") : t("view.capture");
+  waveMeta.textContent = t("view.metaWave", { n: 256 });
+  specMeta.textContent = t("view.metaSpec", { n: 128 });
+  renderWindowList();
+  renderSelected();
+}
+
+async function bootstrap() {
+  // 先落地主题与语言，避免默认配色闪一下再换
+  settings = await prefs.load();
+
+  panel = createSettingsPanel({
+    prefs,
+    reloadKernel: () => api.reloadDll(),
+    log: (message, kind) => log(message, kind),
+  });
+
+  visualizer.onRender = updateMeters;
+  applyI18n();
+  refreshTexts();
+
+  // 记录 / 自动跟随这两个开关可能在上次运行时改过，先把界面同步过来
+  recordWav.checked = settings.recordWav;
+  followMain.checked = settings.autoFollow;
 
   const unlisteners: UnlistenFn[] = [];
   unlisteners.push(
     await listen<AudioFrameEvent>(EVT_AUDIO, (event) => {
       if (capturingPid === null) return;
       if (event.payload.pid !== capturingPid) return;
-      lastFrame = event.payload;
       visualizer.push(event.payload);
     }),
   );
@@ -405,12 +433,31 @@ async function bootstrap() {
       log(event.payload.message, event.payload.switched ? "info" : "warn");
     }),
   );
+  unlisteners.push(
+    await prefs.subscribe((next) => {
+      settings = next;
+      // 换了语言要把所有文案重刷，换了主题要重新读一次画布颜色
+      visualizer.refreshTheme();
+      recordWav.checked = next.recordWav;
+      followMain.checked = next.autoFollow;
+      autoFollow = next.autoFollow;
+      refreshTexts();
+      panel?.sync(next);
+    }),
+  );
   window.addEventListener("beforeunload", () => unlisteners.forEach((fn) => fn()));
 
-  btnReload.addEventListener("click", () => refreshDllStatus(true));
+  // 「跟随系统」时，系统切到深色要立刻跟着变（不写盘、不广播，只重套一次）
+  prefs.watchSystem(() => {
+    if (prefs.get().themeMode !== "system") return;
+    prefs.reapply();
+    visualizer.refreshTheme();
+  });
+
   btnRefresh.addEventListener("click", () => {
     void refreshWindows();
   });
+  btnSettings.addEventListener("click", () => panel?.toggle());
   searchInput.addEventListener("input", renderWindowList);
   filterAudio.addEventListener("change", renderWindowList);
   btnCapture.addEventListener("click", () => {
@@ -423,24 +470,25 @@ async function bootstrap() {
       await api.setBallVisible(next);
       ballVisible = next;
       syncBallButton();
-      log(ballVisible ? "悬浮球已显示" : "悬浮球已隐藏");
+      log(ballVisible ? t("ball.shown") : t("ball.hidden"));
     } catch (err) {
-      log(`切换悬浮球失败：${String(err)}`, "error");
+      log(t("ball.toggleFailed", { err: String(err) }), "error");
     }
   });
   followMain.addEventListener("change", async () => {
+    const wanted = followMain.checked;
     try {
-      autoFollow = await api.setAutoFollow(followMain.checked);
+      autoFollow = await api.setAutoFollow(wanted);
       followMain.checked = autoFollow;
-      log(
-        autoFollow
-          ? "自动跟随已开启：当前窗口安静下来、别的窗口开始出声时会自动切过去"
-          : "自动跟随已关闭",
-      );
+      await prefs.patch({ autoFollow });
+      log(autoFollow ? t("follow.on") : t("follow.off"));
     } catch (err) {
       followMain.checked = autoFollow;
-      log(`设置自动跟随失败：${String(err)}`, "error");
+      log(t("follow.failed", { err: String(err) }), "error");
     }
+  });
+  recordWav.addEventListener("change", () => {
+    void prefs.patch({ recordWav: recordWav.checked });
   });
 
   await refreshDllStatus(false);
@@ -453,7 +501,7 @@ async function bootstrap() {
     }
   }, 5000);
 
-  log("就绪。先让目标窗口播放声音，再从左侧选择它。");
+  log(t("log.ready"));
 }
 
 void bootstrap();

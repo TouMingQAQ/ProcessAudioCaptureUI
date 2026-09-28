@@ -1,4 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { BallDataSource } from "./ball-style";
+import type { Language } from "./i18n";
+import type { ThemeMode } from "./theme";
 
 /** 与 Rust 端 `sessions::AudioWindowInfo` 对应。 */
 export interface AudioWindowInfo {
@@ -108,11 +111,28 @@ export interface AudioFrameEvent {
   windowMs: number;
 }
 
+/** 与 Rust 端 `prefs::Settings` 对应：主界面与悬浮球共用的界面偏好。 */
+export interface Settings {
+  /** `light` / `dark` / `system`，同时作用于主界面与悬浮球。 */
+  themeMode: ThemeMode;
+  appTheme: string;
+  ballTheme: string;
+  /** 悬浮球「律动样式」id（见 `ball-style.ts` 的 `BALL_STYLES`）：决定小球长什么样。 */
+  ballStyle: string;
+  /** 小球跟着哪种数据律动：`spectrum`（频谱）/ `wave`（波形）/ `adaptive`（自适应）。 */
+  ballSource: BallDataSource;
+  language: Language;
+  autoFollow: boolean;
+  recordWav: boolean;
+}
+
 export const EVT_AUDIO = "pac://audio-frame";
 export const EVT_STOPPED = "pac://stopped";
 export const EVT_ERROR = "pac://error";
 export const EVT_MONITOR = "pac://monitor";
 export const EVT_CAPTURE_CHANGED = "pac://capture-changed";
+/** 界面偏好变化（`save_settings` 之后由 Rust 广播给所有窗口）。 */
+export const EVT_SETTINGS = "pac://settings";
 /** 后端轮询光标后广播的悬浮球悬停状态（见 `src-tauri/src/ball.rs`）。 */
 export const EVT_BALL_HOVER = "pac://ball-hover";
 
@@ -123,6 +143,8 @@ export interface BallHover {
 
 export const WAVE_BUCKETS = 256;
 export const SPECTRUM_BINS = 128;
+/** `waveform` 是 `(min, max)` 成对出现的，这就是对数。 */
+export const WAVE_PAIRS = WAVE_BUCKETS;
 
 export const api = {
   dllStatus: () => invoke<DllStatus>("dll_status"),
@@ -138,4 +160,6 @@ export const api = {
   setAutoFollow: (enabled: boolean) => invoke<boolean>("set_auto_follow", { enabled }),
   setBallVisible: (visible: boolean) => invoke<void>("set_ball_visible", { visible }),
   showMainWindow: () => invoke<void>("show_main_window"),
+  getSettings: () => invoke<Settings>("get_settings"),
+  saveSettings: (settings: Settings) => invoke<Settings>("save_settings", { settings }),
 };

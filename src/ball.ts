@@ -17,6 +17,8 @@ import {
   type MonitorTick,
   type StopReport,
 } from "./api";
+import { applyI18n, t } from "./i18n";
+import { bindSettings } from "./settings";
 import { OrbVisualizer, formatDb } from "./orb";
 
 const $ = <T extends HTMLElement>(id: string): T => {
@@ -31,7 +33,6 @@ const panel = $<HTMLElement>("panel");
 const nowName = $<HTMLDivElement>("now-name");
 const nowTitle = $<HTMLDivElement>("now-title");
 const nowState = $<HTMLSpanElement>("now-state");
-const nowFrames = $<HTMLSpanElement>("now-frames");
 const meterFill = $<HTMLElement>("meter-fill");
 const meterText = $<HTMLSpanElement>("meter-text");
 const candidateBox = $<HTMLDivElement>("candidate");
@@ -43,12 +44,15 @@ const hint = $<HTMLParagraphElement>("hint");
 
 const visualizer = new OrbVisualizer($<HTMLCanvasElement>("orb-canvas"));
 const appWindow = getCurrentWindow();
+const prefs = bindSettings("ball");
 
 let capturing = false;
 let autoFollow = false;
 let busy = false;
 let expanded = false;
 let hintTimer = 0;
+/** 最近一次扫描结果：语言一变要用新语言把这一tick 重新渲染一遍。 */
+let lastTick: MonitorTick | null = null;
 
 /* ------------------------------------------------------------- 悬停展开 */
 
@@ -84,13 +88,13 @@ orb.addEventListener("mousedown", (event) => {
 function sessionLabel(win: AudioWindowInfo): string {
   switch (win.sessionState) {
     case "active":
-      return "正在播放";
+      return t("session.active");
     case "inactive":
-      return "会话空闲";
+      return t("session.inactive");
     case "expired":
-      return "会话已失效";
+      return t("session.expired");
     default:
-      return "无音频会话";
+      return t("session.none");
   }
 }
 
@@ -98,14 +102,14 @@ function sessionLabel(win: AudioWindowInfo): string {
 function mediaLabel(media: MediaInfo): string {
   switch (media.status) {
     case "playing":
-      return "正在播放";
+      return t("ballWindow.mediaPlaying");
     case "paused":
-      return "已暂停";
+      return t("ballWindow.mediaPaused");
     case "stopped":
     case "closed":
-      return "已停止";
+      return t("ballWindow.mediaStopped");
     default:
-      return "媒体会话";
+      return t("ballWindow.mediaSession");
   }
 }
 
@@ -113,18 +117,18 @@ function flashHint(text: string) {
   hint.textContent = text;
   window.clearTimeout(hintTimer);
   hintTimer = window.setTimeout(() => {
-    hint.textContent = "自动跟随：当前窗口安静下来、别的窗口开始出声时，会自动切过去";
+    hint.textContent = t("follow.chip");
   }, 5200);
 }
 
 function syncCaptureButton() {
   if (busy) {
-    btnCapture.textContent = capturing ? "停止中…" : "启动中…";
+    btnCapture.textContent = capturing ? t("ballWindow.stopping") : t("ballWindow.starting");
     btnCapture.disabled = true;
     return;
   }
   btnCapture.disabled = false;
-  btnCapture.textContent = capturing ? "停止采集" : "开始采集";
+  btnCapture.textContent = capturing ? t("ballWindow.stop") : t("ballWindow.capture");
   btnCapture.classList.toggle("is-stop", capturing);
 }
 
@@ -139,14 +143,12 @@ function applyStatus(status: CaptureStatus) {
   if (!status.active) {
     visualizer.relax();
     // 主行（now-title）放状态，次行（now-name）放提示
-    nowTitle.textContent = "还没有开始采集";
-    nowName.textContent = "点下方按钮，小球会自动挑一个正在出声的窗口";
-    nowState.textContent = "待机中";
+    nowTitle.textContent = t("ballWindow.idleTitle");
+    nowName.textContent = t("ballWindow.idleSub");
+    nowState.textContent = t("ballWindow.idleState");
     nowState.classList.remove("is-live");
-    nowFrames.textContent = "—";
   } else {
     nowName.textContent = status.processName ?? `PID ${status.pid}`;
-    nowFrames.textContent = `${status.totalFrames.toLocaleString()} 帧`;
   }
   syncCaptureButton();
 }
@@ -154,13 +156,14 @@ function applyStatus(status: CaptureStatus) {
 /* --------------------------------------------------------------- 事件 */
 
 function onTick(tick: MonitorTick) {
+  lastTick = tick;
   capturing = tick.active;
   visualizer.setActive(tick.active);
   stage.classList.toggle("is-live", tick.active);
   syncCaptureButton();
 
   if (tick.active) {
-    const name = tick.capturing?.processName ?? tick.processName ?? "未知进程";
+    const name = tick.capturing?.processName ?? tick.processName ?? t("list.unknownProcess");
     const windowTitle = tick.capturing?.title?.trim() ?? "";
     const media = tick.media;
 
@@ -172,10 +175,10 @@ function onTick(tick: MonitorTick) {
     } else {
       // 退回窗口标题；连窗口都没有（缩在托盘里）时说明原因
       nowTitle.textContent = windowTitle || name;
-      nowName.textContent = windowTitle ? name : "窗口已最小化，读不到标题";
+      nowName.textContent = windowTitle ? name : t("capture.minimized");
     }
 
-    let stateText = "采集中";
+    let stateText = t("ballWindow.capturing");
     let live = true;
     if (media) {
       stateText = mediaLabel(media);
@@ -185,13 +188,11 @@ function onTick(tick: MonitorTick) {
     }
     nowState.textContent = stateText;
     nowState.classList.toggle("is-live", live);
-    nowFrames.textContent = `${tick.totalFrames.toLocaleString()} 帧`;
   } else if (document.activeElement !== btnCapture) {
-    nowTitle.textContent = "还没有开始采集";
-    nowName.textContent = "点下方按钮，小球会自动挑一个正在出声的窗口";
-    nowState.textContent = "待机中";
+    nowTitle.textContent = t("ballWindow.idleTitle");
+    nowName.textContent = t("ballWindow.idleSub");
+    nowState.textContent = t("ballWindow.idleState");
     nowState.classList.remove("is-live");
-    nowFrames.textContent = "—";
   }
 
   // 用 class 而不是 hidden：位置照常占着，面板高度不会因为提示出现/消失而跳
@@ -199,8 +200,8 @@ function onTick(tick: MonitorTick) {
   candidateBox.classList.toggle("is-off", !candidate);
   if (candidate) {
     candidateText.textContent = tick.active
-      ? `「${candidate.processName}」也在出声，若当前窗口安静下来会自动切过去`
-      : `「${candidate.processName}」正在出声，可以开始采集`;
+      ? t("ballWindow.candidateSwitch", { name: candidate.processName })
+      : t("ballWindow.candidateStart", { name: candidate.processName });
   }
 
   if (tick.autoFollow !== autoFollow) {
@@ -220,20 +221,24 @@ btnCapture.addEventListener("click", async () => {
       const report = await api.stopCapture();
       applyStatus(await api.captureStatus());
       if (report) {
-        const seconds = (report.durationMs / 1000).toFixed(1);
         flashHint(
-          `已停止：${report.processName} · ${report.totalFrames.toLocaleString()} 帧 / ${seconds}s${
-            report.wavPath ? ` · WAV：${report.wavPath}` : ""
-          }`,
+          t("ballWindow.stopped", {
+            name: report.processName,
+            frames: report.totalFrames.toLocaleString(),
+            seconds: (report.durationMs / 1000).toFixed(1),
+            wav: report.wavPath ? t("ballWindow.stoppedWav", { path: report.wavPath }) : "",
+          }),
         );
       }
     } else {
       const report = await api.startCaptureBest(false);
       applyStatus(await api.captureStatus());
       flashHint(
-        `已开始采集 ${report.processName} · ${report.sampleRate || "?"} Hz / ${
-          report.channels || "?"
-        } 声道`,
+        t("ballWindow.started", {
+          name: report.processName,
+          rate: report.sampleRate || "?",
+          channels: report.channels || "?",
+        }),
       );
     }
   } catch (err) {
@@ -250,11 +255,12 @@ btnFollow.addEventListener("click", async () => {
   syncFollowButton();
   try {
     autoFollow = await api.setAutoFollow(autoFollow);
+    await prefs.patch({ autoFollow });
   } catch (err) {
     flashHint(String(err));
   }
   syncFollowButton();
-  flashHint(autoFollow ? "自动跟随已开启" : "自动跟随已关闭");
+  flashHint(autoFollow ? t("follow.turnedOn") : t("follow.turnedOff"));
 });
 
 btnMain.addEventListener("click", () => {
@@ -264,11 +270,15 @@ btnMain.addEventListener("click", () => {
 /* --------------------------------------------------------------- 启动 */
 
 async function bootstrap() {
+  // 先落地主题与语言，避免默认配色闪一下再换
+  await prefs.load();
+  applyI18n();
+
   visualizer.onRender = (rms, peak) => {
     const scale = Math.min(Math.pow(rms, 0.45), 1) * 100;
     meterFill.style.width = `${scale.toFixed(1)}%`;
     meterText.textContent = formatDb(rms);
-    meterText.style.color = peak > 0.985 ? "#e0557f" : "";
+    meterText.classList.toggle("is-hot", peak > 0.985);
   };
 
   await listen<AudioFrameEvent>(EVT_AUDIO, (event) => visualizer.push(event.payload));
@@ -285,6 +295,20 @@ async function bootstrap() {
   await listen<MonitorTick>(EVT_MONITOR, (event) => onTick(event.payload));
   await listen<CaptureChanged>(EVT_CAPTURE_CHANGED, (event) => {
     flashHint(event.payload.message);
+  });
+  await prefs.subscribe((next) => {
+    // 主题、律动样式与语言都可能变：重新读一次小球配色 / 样式，再用新语言重画当前画面
+    visualizer.refreshLook(next.ballTheme);
+    applyI18n();
+    hint.textContent = t("follow.chip");
+    if (lastTick) onTick(lastTick);
+    else syncCaptureButton();
+  });
+
+  prefs.watchSystem(() => {
+    if (prefs.get().themeMode !== "system") return;
+    prefs.reapply();
+    visualizer.refreshLook(prefs.get().ballTheme);
   });
 
   const status = await api.captureStatus();

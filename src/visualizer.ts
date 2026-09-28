@@ -1,4 +1,5 @@
 import { SPECTRUM_BINS, WAVE_BUCKETS, type AudioFrameEvent } from "./api";
+import { canvasColors } from "./theme";
 
 /** 处理 canvas 高分屏缩放，对外暴露 CSS 逻辑尺寸。 */
 class Surface {
@@ -86,6 +87,8 @@ export class Visualizer {
   private peakSmooth = 0;
   private lastFrameAt = 0;
   private rafId = 0;
+  /** 画布颜色取自主题变量；换主题后调 [`refreshTheme`] 重新读一次。 */
+  private colors = canvasColors();
 
   /** 每帧回调：用于驱动电平表等 DOM 元素。 */
   onRender: (rms: number, peak: number, stale: boolean) => void = () => {};
@@ -95,6 +98,11 @@ export class Visualizer {
     this.spectrum = new Surface(spectrumCanvas);
     this.loop = this.loop.bind(this);
     this.rafId = requestAnimationFrame(this.loop);
+  }
+
+  /** 主题 / 明暗变了以后重新读一遍 CSS 变量，下一帧就是新配色。 */
+  refreshTheme() {
+    this.colors = canvasColors();
   }
 
   push(frame: AudioFrameEvent) {
@@ -150,7 +158,7 @@ export class Visualizer {
     const amp = height * 0.46;
 
     // 中轴线 + 上下参考线
-    ctx.strokeStyle = "rgba(184, 164, 234, 0.3)";
+    ctx.strokeStyle = this.colors.grid;
     ctx.lineWidth = 1;
     for (const y of [mid * 0.5, mid, mid * 1.5]) {
       ctx.beginPath();
@@ -160,15 +168,15 @@ export class Visualizer {
     }
 
     const gradient = ctx.createLinearGradient(0, 0, width, 0);
-    gradient.addColorStop(0, "rgba(159, 212, 255, 0.95)");
-    gradient.addColorStop(0.55, "rgba(201, 169, 242, 0.95)");
-    gradient.addColorStop(1, "rgba(255, 143, 184, 0.95)");
+    gradient.addColorStop(0, this.colors.waveA);
+    gradient.addColorStop(0.55, this.colors.waveB);
+    gradient.addColorStop(1, this.colors.waveC);
 
     const step = width / WAVE_BUCKETS;
     const barWidth = Math.max(step * 0.8, 1);
 
     ctx.fillStyle = gradient;
-    ctx.shadowColor = "rgba(255, 178, 208, 0.6)";
+    ctx.shadowColor = this.colors.glow;
     ctx.shadowBlur = 6;
     ctx.beginPath();
     for (let i = 0; i < WAVE_BUCKETS; i++) {
@@ -191,7 +199,7 @@ export class Visualizer {
     const barWidth = Math.max(slot - gap, 1);
 
     // 横向 dB 参考线
-    ctx.strokeStyle = "rgba(184, 164, 234, 0.22)";
+    ctx.strokeStyle = this.colors.grid;
     ctx.lineWidth = 1;
     for (let i = 1; i < 4; i++) {
       const y = Math.round((height / 4) * i) + 0.5;
@@ -202,9 +210,9 @@ export class Visualizer {
     }
 
     const gradient = ctx.createLinearGradient(0, height, 0, 0);
-    gradient.addColorStop(0, "rgba(159, 212, 255, 0.9)");
-    gradient.addColorStop(0.55, "rgba(201, 169, 242, 0.95)");
-    gradient.addColorStop(1, "rgba(255, 143, 184, 1)");
+    gradient.addColorStop(0, this.colors.specA);
+    gradient.addColorStop(0.55, this.colors.specB);
+    gradient.addColorStop(1, this.colors.specC);
 
     ctx.fillStyle = gradient;
     for (let i = 0; i < SPECTRUM_BINS; i++) {
@@ -214,7 +222,7 @@ export class Visualizer {
     }
 
     // 峰值保持帽
-    ctx.fillStyle = "rgba(240, 105, 154, 0.85)";
+    ctx.fillStyle = this.colors.peak;
     for (let i = 0; i < SPECTRUM_BINS; i++) {
       const y = height - this.peaks.at(i) * (height - 6) - 2;
       if (y < -2) continue;
