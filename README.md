@@ -240,25 +240,6 @@ ProcessAudioCaptrueUI/
 `src-tauri/binaries/ProcessAudioCapture.dll` 必须是**内核 v3 及以上**（提供目标枚举与 DSP）。
 如果换成旧版 DLL，界面会在日志里提示"采集内核版本过旧"，目标枚举会直接报错。
 
-内核源码在本机 `G:\Project\Rust\ProcessAudioCapture`，重新编译后覆盖上面那个文件即可：
-
-```powershell
-cd G:\Project\Rust\ProcessAudioCapture
-node G:\Project\Rust\ProcessAudioCaptrueUI\scripts\with-msvc.mjs cargo build --release
-Copy-Item target\release\ProcessAudioCapture.dll `
-          G:\Project\Rust\ProcessAudioCaptrueUI\src-tauri\binaries\ -Force
-```
-
-### 本机特殊情况（必读）
-
-本机的 Visual Studio Build Tools 装在 **`D:\VSBuildTools`**，而且没有注册到 rustc 能自动发现的
-位置，所以直接 `cargo build` 会报 `linker link.exe not found`。
-
-`scripts/with-msvc.mjs` 会从 VS 安装器的实例清单里读出 `vcvars64.bat`、导入它的环境变量，
-再执行目标命令。`npm run app:dev` / `app:build` / `test:rust` 都已经接好了它。
-
-> 如果你的机器上 MSVC 能被 rustc 自动找到，可以直接 `npx tauri dev`，不会受影响。
-
 ### 安装依赖
 
 ```powershell
