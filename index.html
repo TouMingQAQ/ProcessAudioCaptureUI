@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ProcessAudioCapture 测试台</title>
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true"></div>
+          <div class="brand-text">
+            <h1>ProcessAudioCapture 测试台</h1>
+            <p>进程级音频回环采集 · 窗口选择 · 实时可视化</p>
+          </div>
+        </div>
+
+        <div class="topbar-right">
+          <div id="dll-badge" class="badge badge-muted" title="">
+            <span class="dot"></span><span id="dll-badge-text">检测 DLL…</span>
+          </div>
+          <button id="btn-reload" class="btn btn-ghost" type="button">重新加载 DLL</button>
+        </div>
+      </header>
+
+      <main class="layout">
+        <!-- 左：窗口选择 -->
+        <section class="panel panel-list">
+          <div class="panel-head">
+            <h2>可捕获音频的窗口</h2>
+            <span id="window-count" class="count">0</span>
+          </div>
+
+          <div class="toolbar">
+            <input
+              id="search"
+              class="input"
+              type="search"
+              placeholder="按窗口标题 / 进程名过滤…"
+              autocomplete="off"
+            />
+            <button id="btn-refresh" class="btn btn-ghost" type="button">刷新</button>
+          </div>
+
+          <label class="switch">
+            <input id="filter-audio" type="checkbox" />
+            <span>仅显示存在音频会话的窗口</span>
+          </label>
+
+          <div id="window-list" class="window-list" role="listbox" aria-label="窗口列表">
+            <div class="empty">正在枚举窗口…</div>
+          </div>
+
+          <div id="warnings" class="warnings" hidden></div>
+        </section>
+
+        <!-- 右：可视化 -->
+        <section class="panel panel-view">
+          <div class="panel-head">
+            <h2>实时音频可视化</h2>
+            <span id="session-state" class="pill pill-idle">未采集</span>
+          </div>
+
+          <div id="now-capturing" class="now-capturing">
+            <div>
+              <div class="nc-title">尚未选择窗口</div>
+              <div class="nc-sub">从左侧列表选择一个正在播放声音的窗口，然后点击"开始采集"</div>
+            </div>
+            <button id="btn-capture" class="btn btn-primary" type="button" disabled>开始采集</button>
+          </div>
+
+          <label class="switch switch-inline">
+            <input id="record-wav" type="checkbox" />
+            <span>同时录制为 WAV 文件（保存到"下载"目录）</span>
+          </label>
+
+          <div class="viz-block">
+            <div class="viz-head">
+              <span>波形（峰谷包络）</span>
+              <span id="wave-meta" class="viz-meta">—</span>
+            </div>
+            <canvas id="canvas-wave" class="canvas canvas-wave"></canvas>
+          </div>
+
+          <div class="viz-block">
+            <div class="viz-head">
+              <span>频谱（20 Hz → Nyquist，对数轴）</span>
+              <span id="spec-meta" class="viz-meta">—</span>
+            </div>
+            <canvas id="canvas-spectrum" class="canvas canvas-spectrum"></canvas>
+          </div>
+
+          <div class="meters">
+            <div class="meter">
+              <div class="meter-label">RMS</div>
+              <div class="meter-track"><div id="meter-rms" class="meter-fill meter-rms"></div></div>
+              <div id="meter-rms-text" class="meter-text">-∞ dB</div>
+            </div>
+            <div class="meter">
+              <div class="meter-label">峰值</div>
+              <div class="meter-track"><div id="meter-peak" class="meter-fill meter-peak"></div></div>
+              <div id="meter-peak-text" class="meter-text">-∞ dB</div>
+            </div>
+            <div class="meter meter-stats">
+              <div class="meter-label">会话</div>
+              <div id="stats-text" class="stats-text">—</div>
+            </div>
+          </div>
+
+          <div id="log" class="log" aria-live="polite"></div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
