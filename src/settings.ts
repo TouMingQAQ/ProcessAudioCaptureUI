@@ -5,26 +5,29 @@
  * 之后监听 `pac://settings` 广播。任意一边改了设置，Rust 广播回来，两边同时换肤 ——
  * 不依赖 WebView 之间是否共享 localStorage。
  *
- * `scope` 决定这份窗口该套哪套主题：主界面跟「应用主题」，悬浮球跟「悬浮球主题」，
- * 但深色模式（浅色 / 深色 / 跟随系统）是共用的。
+ * `scope` 决定这份窗口该套哪条线：主界面跟「应用主题」+「深色模式」，悬浮球跟用户自己
+ * 排的色槽与内外两个律动样式（悬浮球不吃明暗，固定按亮色那套走）。
  */
 
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { EVT_SETTINGS, api, type Settings } from "./api";
+import {
+  DEFAULT_BALL_PULSE_ALGORITHM,
+  DEFAULT_BALL_PULSE_AMOUNT,
+  pulseAlgorithmById,
+} from "./ball-pulse";
 import { setLanguage } from "./i18n";
 import {
   APP_THEMES,
-  BALL_THEMES,
-  BALL_DATA_SOURCES,
-  BALL_STYLES,
   DEFAULT_APP_THEME,
-  DEFAULT_BALL_DATA_SOURCE,
-  DEFAULT_BALL_STYLE,
-  DEFAULT_BALL_THEME,
+  DEFAULT_BALL_COLOR,
   applyAppTheme,
+  applyBallColors,
   applyBallLook,
-  applyBallTheme,
+  ballPresetById,
+  ballStyleById,
+  normalizeBallColors,
   resolveDataSource,
   type Appearance,
 } from "./theme";
@@ -32,37 +35,88 @@ import {
 export const DEFAULT_SETTINGS: Settings = {
   themeMode: "system",
   appTheme: DEFAULT_APP_THEME,
-  ballTheme: DEFAULT_BALL_THEME,
-  ballStyle: DEFAULT_BALL_STYLE,
-  ballSource: DEFAULT_BALL_DATA_SOURCE,
   language: "zh-CN",
   autoFollow: false,
   recordWav: false,
+
+  // 悬浮球的几项都用"空值 = 还没配过"当哨兵：`normalize` 会按旧配置或默认值补上。
+  // 这样做是为了让老版本的 settings.json 平滑升级 —— 见 [`normalizeBall`]。
+  ballColors: [],
+  ballInnerStyle: "",
+  ballOuterStyle: "",
+  ballInnerSource: "",
+  ballOuterSource: "",
+  ballSize: 1,
+  ballGain: 1,
+  ballPulse: false,
+  ballPulseAlgorithm: DEFAULT_BALL_PULSE_ALGORITHM,
+  ballPulseAmount: DEFAULT_BALL_PULSE_AMOUNT,
+  // 球心在屏幕里的位置（0~1）：默认贴着右下角那一带，和以前的样子差不多
+  ballPosX: 0.92,
+  ballPosY: 0.88,
+
+  // 遗留字段：只在迁移时读一次
+  ballTheme: "solid",
+  ballStyle: "",
+  ballSource: "",
 };
+
+function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
+  const n = typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+/**
+ * 悬浮球那几项的收敛与迁移。
+ *
+ * 老版本的 settings.json 里只有 `ballTheme`（配色预设）/ `ballStyle`（唯一那个样式）/
+ * `ballSource`（唯一那个数据源），新版本换成了自定义色槽 + 内外两层。空值表示"还没
+ * 配过"，于是老配置能原地升级：配色铺成当时那个预设的三色，旧的样式与数据源当成外圈。
+ */
+function normalizeBall(merged: Settings): void {
+  if (merged.ballColors.length === 0) {
+    const preset = ballPresetById(merged.ballTheme);
+    merged.ballColors = preset ? [...preset.colors] : [DEFAULT_BALL_COLOR];
+  }
+  merged.ballColors = normalizeBallColors(merged.ballColors);
+
+  // 外圈：没配过就沿用旧版那个唯一样式（可能为空，那就落回默认样式）
+  merged.ballOuterStyle = ballStyleById(merged.ballOuterStyle || merged.ballStyle, "outer").id;
+  merged.ballInnerStyle = ballStyleById(merged.ballInnerStyle, "inner").id;
+
+  const inner = ballStyleById(merged.ballInnerStyle, "inner");
+  const outer = ballStyleById(merged.ballOuterStyle, "outer");
+  merged.ballInnerSource = resolveDataSource(merged.ballInnerSource, inner.mode);
+  merged.ballOuterSource = resolveDataSource(
+    merged.ballOuterSource || merged.ballSource,
+    outer.mode,
+  );
+
+  merged.ballSize = clampNumber(merged.ballSize, 0, 3, 1);
+  merged.ballGain = clampNumber(merged.ballGain, 0, 5, 1);
+  merged.ballPulse = Boolean(merged.ballPulse);
+  merged.ballPulseAlgorithm = pulseAlgorithmById(merged.ballPulseAlgorithm).id;
+  merged.ballPulseAmount = clampNumber(merged.ballPulseAmount, 1, 3, 1);
+  // 球心位置是屏幕里的百分比：夹在 0..1，具体留边由前端按球的实际大小算
+  merged.ballPosX = clampNumber(merged.ballPosX, 0, 1, 0.92);
+  merged.ballPosY = clampNumber(merged.ballPosY, 0, 1, 0.88);
+}
 
 /** 字段可能是手改坏的、也可能来自旧版本，一律收敛到已知取值。 */
 export function normalize(raw: Partial<Settings> | null | undefined): Settings {
-  const merged = { ...DEFAULT_SETTINGS, ...(raw ?? {}) };
+  const merged: Settings = { ...DEFAULT_SETTINGS, ...(raw ?? {}) };
+
   if (!APP_THEMES.some((theme) => theme.id === merged.appTheme)) {
     merged.appTheme = DEFAULT_APP_THEME;
   }
-  if (!BALL_THEMES.some((theme) => theme.id === merged.ballTheme)) {
-    merged.ballTheme = DEFAULT_BALL_THEME;
-  }
-  if (!BALL_STYLES.some((style) => style.id === merged.ballStyle)) {
-    merged.ballStyle = DEFAULT_BALL_STYLE;
-  }
-  // 数据源还要跟样式对得上：像「柱阵」这种只认频谱的样式不能配波形
-  const source = BALL_DATA_SOURCES.includes(merged.ballSource)
-    ? merged.ballSource
-    : DEFAULT_BALL_DATA_SOURCE;
-  merged.ballSource = resolveDataSource(merged.ballStyle, source);
   if (merged.themeMode !== "light" && merged.themeMode !== "dark" && merged.themeMode !== "system") {
     merged.themeMode = "system";
   }
   if (merged.language !== "zh-CN" && merged.language !== "en-US") {
     merged.language = "zh-CN";
   }
+
+  normalizeBall(merged);
   return merged;
 }
 
@@ -85,10 +139,11 @@ export function bindSettings(scope: "app" | "ball"): SettingsBinding {
   let current: Settings = { ...DEFAULT_SETTINGS };
 
   /**
-   * 套用设置：亮暗决定取哪份色板，`scope` 决定用哪条主题线。
+   * 套用设置：`scope` 决定用哪条线。深色模式只作用于应用主题 —— 悬浮球按色槽走，
+   * 切浅色 / 深色 / 跟随系统时它一动不动。
    *
-   * 悬浮球这边要先上**配色**、再上**形状**（律动样式 + 数据源）—— 两者互不覆盖：
-   * 前者只写 `--ui-orb-*` 这类颜色变量，后者只写 `<html>` 上的 `data-ball-*`。
+   * 悬浮球这边配色与形状互不覆盖：前者只写 `--ui-*` / `--ui-orb-*` 颜色变量，
+   * 后者只写 `<html>` 上的 `data-ball-*`。
    */
   const apply = (settings: Settings): Appearance => {
     current = settings;
@@ -96,13 +151,19 @@ export function bindSettings(scope: "app" | "ball"): SettingsBinding {
 
     let appearance: Appearance;
     if (scope === "ball") {
-      appearance = applyBallTheme(settings.ballTheme, settings.themeMode);
-      applyBallLook(settings.ballStyle, settings.ballSource);
+      applyBallColors(settings.ballColors);
+      applyBallLook(
+        settings.ballInnerStyle,
+        settings.ballOuterStyle,
+        settings.ballInnerSource,
+        settings.ballOuterSource,
+      );
+      appearance = "light";
     } else {
       appearance = applyAppTheme(settings.appTheme, settings.themeMode);
     }
 
-    // 主窗口的标题栏 / 边框也跟着系统深色走；悬浮球无边框，调了也没坏处
+    // 标题栏 / 边框跟着明暗走（悬浮球固定浅色；它无边框，其实用不上）
     void getCurrentWindow()
       .setTheme(appearance)
       .catch(() => {});

@@ -30,22 +30,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager, PhysicalPosition, State, WebviewWindow};
+use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, State, WebviewWindow};
 
 use capture::{ActiveCapture, StartReport, StopReport};
 use pac::PacLibrary;
 use prefs::Settings;
 use sessions::WindowListResult;
-
-/// 悬浮球窗口的逻辑尺寸 —— **恒定**，不随展开收起变化。
-///
-/// 收起时只是把面板藏起来，窗口照旧这么大、也绝不移动。这不是偷懒：
-/// WebView 的布局视口就是窗口客户区，窗口一 resize，视口会晚一帧才跟上，
-/// 那一帧里内容仍按旧视口排版、却已经画在新窗口的左上角 —— 表现出来就是
-/// 鼠标一碰小球，小球先闪到窗口左上角再弹回来。尺寸和位置全程不变，这一帧就不存在。
-const BALL_EXPANDED: (f64, f64) = (348.0, 468.0);
-/// 悬浮球启动时距屏幕右下角的逻辑边距。
-const BALL_MARGIN: f64 = 28.0;
 
 #[derive(Default)]
 pub struct AppState {
@@ -56,6 +46,8 @@ pub struct AppState {
     auto_follow: AtomicBool,
     /// 最近一次使用的"顺便录 WAV"设置，自动跟随切换时会沿用。
     record_wav: AtomicBool,
+    /// 悬浮球的可交互区域与拖动状态（悬停检测线程要用，见 [`ball`]）。
+    ball: ball::BallInteraction,
 }
 
 /// 中毒的锁也要能拿到，否则一次 panic 会让整个应用卡死。
@@ -425,6 +417,44 @@ fn set_ball_visible(app: AppHandle, visible: bool) -> Result<(), String> {
     }
 }
 
+/// 前端上报可交互区域（球心 / 半径 / 面板矩形，窗口逻辑像素）。
+///
+/// 球多大、面板摆在哪一边都是前端算的（球的大小可变、面板还要避开屏幕边缘），
+/// 悬停检测只要拿这块区域跟光标比一下就行，不必在这里重复一遍布局规则。
+#[tauri::command]
+fn set_ball_geometry(
+    state: State<'_, AppState>,
+    orb_x: f64,
+    orb_y: f64,
+    orb_r: f64,
+    panel: Option<Vec<f64>>,
+) {
+    let panel = panel.and_then(|values| match values.as_slice() {
+        [left, top, right, bottom] => Some([*left, *top, *right, *bottom]),
+        _ => None,
+    });
+    let first = state.ball.set_hit(ball::BallHit {
+        orb_x,
+        orb_y,
+        orb_r,
+        panel,
+    });
+    if first {
+        eprintln!(
+            "[ProcessAudioCapture] 悬浮球可交互区域已上报：球心 ({orb_x:.0}, {orb_y:.0})，半径 {orb_r:.0}"
+        );
+    }
+}
+
+/// 拖动开始 / 结束。
+///
+/// 拖动期间窗口必须**保持可交互** —— 前端正收着 pointer 事件，一旦切成鼠标穿透，
+/// 事件就断了，球会卡在半路。
+#[tauri::command]
+fn set_ball_dragging(state: State<'_, AppState>, dragging: bool) {
+    state.ball.set_dragging(dragging);
+}
+
 #[tauri::command]
 fn show_main_window(app: AppHandle) -> Result<(), String> {
     let window = app
@@ -439,25 +469,21 @@ fn show_main_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// 把悬浮球放到主显示器右下角。
-/// 把悬浮球摆到主屏右下角，并切成"收起"状态。
+/// 把悬浮球窗口铺满主显示器，并切成"收起"状态。
 ///
-/// 小球在窗口内部锚定在**右下角**（见 `ball.css` 的 `.orb`），所以这里按窗口的
-/// 右下角对齐 —— 窗口有多大都不影响小球落在哪儿。
+/// 铺满整屏而不是围着小球开一小块，是为了让球能停在屏幕的**任何**地方：窗口只有
+/// 348×468 时球锚在窗口右下角、窗口又被限制在屏幕内，球就永远够不到屏幕上沿。
+/// 铺满之后窗口自己不再移动，球的位置由前端按百分比定位决定（`ballPosX` / `ballPosY`）。
+///
+/// 顺带也避开了"改窗口尺寸会让 WebView 视口晚一帧"的老问题：尺寸只在启动时设一次。
 fn place_ball(window: &WebviewWindow) {
     let Ok(Some(monitor)) = window.primary_monitor() else {
         return;
     };
-    let scale = monitor.scale_factor();
-    let w = (BALL_EXPANDED.0 * scale).round() as i32;
-    let h = (BALL_EXPANDED.1 * scale).round() as i32;
-    let margin = (BALL_MARGIN * scale).round() as i32;
     let origin = monitor.position();
     let bounds = monitor.size();
-
-    let x = origin.x + bounds.width as i32 - w - margin;
-    let y = origin.y + bounds.height as i32 - h - margin * 3;
-    let _ = window.set_position(PhysicalPosition::new(x, y));
+    let _ = window.set_position(PhysicalPosition::new(origin.x, origin.y));
+    let _ = window.set_size(PhysicalSize::new(bounds.width, bounds.height));
 
     // 收起状态：整窗鼠标穿透，悬停交给 `ball` 模块轮询判断
     let _ = window.set_ignore_cursor_events(true);
@@ -544,6 +570,8 @@ pub fn run() {
             stop_capture,
             set_auto_follow,
             set_ball_visible,
+            set_ball_geometry,
+            set_ball_dragging,
             show_main_window,
             get_settings,
             save_settings

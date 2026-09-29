@@ -1,5 +1,4 @@
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./ball.css";
 import {
   EVT_AUDIO,
@@ -15,6 +14,7 @@ import {
   type CaptureStatus,
   type MediaInfo,
   type MonitorTick,
+  type Settings,
   type StopReport,
 } from "./api";
 import { applyI18n, t } from "./i18n";
@@ -43,7 +43,6 @@ const btnMain = $<HTMLButtonElement>("btn-main");
 const hint = $<HTMLParagraphElement>("hint");
 
 const visualizer = new OrbVisualizer($<HTMLCanvasElement>("orb-canvas"));
-const appWindow = getCurrentWindow();
 const prefs = bindSettings("ball");
 
 let capturing = false;
@@ -71,17 +70,156 @@ function applyHover(hovered: boolean) {
   expanded = hovered;
   stage.classList.toggle("is-expanded", hovered);
   panel.setAttribute("aria-hidden", hovered ? "false" : "true");
+  // 面板的进出改变了可交互区域，重新报一次
+  reportGeometry();
 }
 
 void listen<BallHover>(EVT_BALL_HOVER, (event) => applyHover(event.payload.hovered));
 
-/* ----------------------------------------------------------------- 拖拽 */
+/* ------------------------------------------------------- 位置：拖动 / 记忆 */
 
-orb.addEventListener("mousedown", (event) => {
+/** 球心在窗口里的位置（0~1）。窗口铺满整屏，所以这也等于它在屏幕上的位置。 */
+const position = { x: 0.92, y: 0.88 };
+
+let dragging = false;
+let dragOffsetX = 0;
+let dragOffsetY = 0;
+
+function clamp01(value: number): number {
+  return Math.min(1, Math.max(0, value));
+}
+
+/**
+ * 把球摆到某个百分比位置。
+ *
+ * 位置要夹一下：球自己有半径，太靠边就会露到屏幕外。边距按球的实际像素尺寸算，
+ * 所以球调大之后能活动的范围会自然收窄。
+ */
+function moveOrb(x: number, y: number, report = true) {
+  const width = orb.offsetWidth || 96;
+  const height = orb.offsetHeight || 96;
+  const marginX = width / 2 / Math.max(1, window.innerWidth);
+  const marginY = height / 2 / Math.max(1, window.innerHeight);
+
+  position.x = Math.min(1 - marginX, Math.max(marginX, clamp01(x)));
+  position.y = Math.min(1 - marginY, Math.max(marginY, clamp01(y)));
+
+  const root = document.documentElement;
+  root.style.setProperty("--orb-cx", `${(position.x * 100).toFixed(3)}%`);
+  root.style.setProperty("--orb-cy", `${(position.y * 100).toFixed(3)}%`);
+
+  placePanel();
+  if (report) reportGeometry();
+}
+
+/**
+ * 把面板摆到球旁边。
+ *
+ * 横向 / 纵向各看一眼哪边更宽敞就往哪边展开，再把结果夹回窗口内 —— 球在左上角时
+ * 面板落向右下，球贴着右边缘时面板落到左边，总之不会跑出屏幕。
+ */
+function placePanel() {
+  const gap = 12;
+  const margin = 8;
+  // 用 offset* 而不是 getBoundingClientRect：后者会把"随音频律动缩放"也算进去，
+  // 面板会跟着每一下鼓点抖。这里要的是球的**基准**外框。
+  const size = orb.offsetWidth || 96;
+  const left = orb.offsetLeft - size / 2;
+  const top = orb.offsetTop - size / 2;
+  const right = left + size;
+  const bottom = top + size;
+  const width = panel.offsetWidth || 300;
+  const height = panel.offsetHeight || 320;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+
+  const rightRoom = vw - right - gap;
+  const leftRoom = left - gap;
+  const panelLeft =
+    rightRoom >= leftRoom
+      ? Math.min(right + gap, Math.max(margin, vw - margin - width))
+      : Math.max(margin, left - gap - width);
+
+  const downRoom = vh - bottom - gap;
+  const upRoom = top - gap;
+  const panelTop =
+    downRoom >= upRoom
+      ? Math.min(bottom + gap, Math.max(margin, vh - margin - height))
+      : Math.max(margin, top - gap - height);
+
+  panel.style.left = `${Math.round(panelLeft)}px`;
+  panel.style.top = `${Math.round(panelTop)}px`;
+}
+
+/**
+ * 把可交互区域报给后端。
+ *
+ * 窗口铺满整屏、收起时整窗鼠标穿透，后端只认这一块区域 —— 球在哪、多大、面板摆在
+ * 哪边都是前端算的（球能缩放、面板还要躲屏幕边），那边照着一比就行。
+ */
+function reportGeometry() {
+  // 用 offset* 而不是 getBoundingClientRect：前者不受 transform 影响，
+  // 鼠标悬停在球上时那点放大不会让命中圈跟着抖
+  const panelRect: [number, number, number, number] | null = expanded
+    ? [
+        panel.offsetLeft,
+        panel.offsetTop,
+        panel.offsetLeft + panel.offsetWidth,
+        panel.offsetTop + panel.offsetHeight,
+      ]
+    : null;
+
+  void api
+    .setBallGeometry({
+      orbX: orb.offsetLeft,
+      orbY: orb.offsetTop,
+      orbR: orb.offsetWidth / 2,
+      panel: panelRect,
+    })
+    .catch(() => {});
+}
+
+orb.addEventListener("pointerdown", (event) => {
   if (event.button !== 0) return;
   event.preventDefault();
-  void appWindow.startDragging().catch(() => {});
+  // 球心就是 offsetLeft / offsetTop（`left` / `top` 定位的就是它），
+  // 这个取法跟律动缩放无关，抓到哪个位置就是哪个位置
+  dragOffsetX = event.clientX - orb.offsetLeft;
+  dragOffsetY = event.clientY - orb.offsetTop;
+  dragging = true;
+  orb.setPointerCapture(event.pointerId);
+  stage.classList.add("is-dragging");
+  // 拖动期间后端必须让窗口保持可交互，否则指针事件一断，球就卡在半路
+  void api.setBallDragging(true).catch(() => {});
 });
+
+orb.addEventListener("pointermove", (event) => {
+  if (!dragging) return;
+  // 拖动中不回报几何：这段时间后端固定保持可交互，报了也用不上
+  moveOrb(
+    (event.clientX - dragOffsetX) / window.innerWidth,
+    (event.clientY - dragOffsetY) / window.innerHeight,
+    false,
+  );
+});
+
+function endDrag(event: PointerEvent) {
+  if (!dragging) return;
+  dragging = false;
+  if (orb.hasPointerCapture(event.pointerId)) orb.releasePointerCapture(event.pointerId);
+  stage.classList.remove("is-dragging");
+  void api.setBallDragging(false).catch(() => {});
+  reportGeometry();
+  placePanel();
+  // 位置落盘：下次打开还在原地
+  void prefs.patch({ ballPosX: position.x, ballPosY: position.y });
+}
+
+orb.addEventListener("pointerup", endDrag);
+orb.addEventListener("pointercancel", endDrag);
+
+// 分辨率或显示器变了，窗口尺寸跟着变，位置与命中区域都要重算
+window.addEventListener("resize", () => moveOrb(position.x, position.y));
 
 /* ----------------------------------------------------------------- 文案 */
 
@@ -269,9 +407,28 @@ btnMain.addEventListener("click", () => {
 
 /* --------------------------------------------------------------- 启动 */
 
+/** 把设置里的外观部分整个交给小球渲染器（颜色、内外样式、数据源、尺寸、缩放）。 */
+function applyLook(settings: Settings): void {
+  visualizer.refreshLook({
+    colors: settings.ballColors,
+    innerStyle: settings.ballInnerStyle,
+    outerStyle: settings.ballOuterStyle,
+    innerSource: settings.ballInnerSource,
+    outerSource: settings.ballOuterSource,
+    size: settings.ballSize,
+    gain: settings.ballGain,
+    pulse: settings.ballPulse,
+    algorithm: settings.ballPulseAlgorithm,
+    pulseAmount: settings.ballPulseAmount,
+  });
+}
+
 async function bootstrap() {
   // 先落地主题与语言，避免默认配色闪一下再换
-  await prefs.load();
+  const loaded = await prefs.load();
+  applyLook(loaded);
+  // 球摆到上次记住的位置（首次运行就是默认的右下角那一带）
+  moveOrb(loaded.ballPosX, loaded.ballPosY);
   applyI18n();
 
   visualizer.onRender = (rms, peak) => {
@@ -297,18 +454,14 @@ async function bootstrap() {
     flashHint(event.payload.message);
   });
   await prefs.subscribe((next) => {
-    // 主题、律动样式与语言都可能变：重新读一次小球配色 / 样式，再用新语言重画当前画面
-    visualizer.refreshLook(next.ballTheme);
+    // 外观、数据源与语言都可能变：重新读一次外观，再用新语言重画当前画面
+    applyLook(next);
+    // 球可能被调大了，位置重新夹一下（免得半个球露到屏幕外）
+    moveOrb(position.x, position.y);
     applyI18n();
     hint.textContent = t("follow.chip");
     if (lastTick) onTick(lastTick);
     else syncCaptureButton();
-  });
-
-  prefs.watchSystem(() => {
-    if (prefs.get().themeMode !== "system") return;
-    prefs.reapply();
-    visualizer.refreshLook(prefs.get().ballTheme);
   });
 
   const status = await api.captureStatus();

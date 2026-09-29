@@ -118,25 +118,29 @@ const ZH: Dict = {
   "settings.general.saved": "设置已保存",
 
   "settings.theme.mode": "深色模式",
-  "settings.theme.modeHint": "决定「主题」与「悬浮球」两处用白天还是黑夜的那一份，两边同时生效。",
+  "settings.theme.modeHint": "只决定应用主题用白天还是黑夜的那一份；悬浮球不跟着变，固定用浅色那份。",
   "settings.theme.mode.light": "浅色",
   "settings.theme.mode.dark": "深色",
   "settings.theme.mode.system": "跟随系统",
   "settings.theme.app": "应用主题",
   "settings.theme.appHint": "每张卡片左边是浅色、右边是深色，点一下立即生效。",
-  "settings.theme.ball": "悬浮球配色",
-  "settings.theme.ballHint": "只管颜色：小球与悬停面板的用色。形状由下面的「律动样式」决定。",
-  "settings.theme.style": "律动样式",
-  "settings.theme.styleHint": "只管形状：小球长什么样、怎么跟着音乐动。颜色与上面的配色自由组合。",
-  "settings.theme.ballSource": "律动数据",
-  "settings.theme.ballSourceHint": "小球读哪一份数据来律动：内核的 128 柱对数频谱，或 256 点峰谷包络波形。",
-  "settings.theme.ballSource.spectrum": "频谱",
-  "settings.theme.ballSource.wave": "波形",
-  "settings.theme.ballSource.adaptive": "自适应",
-  "settings.theme.ballSource.hint.spectrum": "现在跟的是频谱：128 柱对数频率，低音在左、高音在右。",
-  "settings.theme.ballSource.hint.wave": "现在跟的是波形：256 点峰谷包络，跟整体起伏与鼓点冲击力。",
-  "settings.theme.ballSource.hint.adaptive": "自适应：每一帧比较频谱与波形谁更活跃，谁活跃就用谁。",
-  "settings.theme.ballSource.fixed": "「{style}」只画{source}，这一个不用选。",
+  "settings.ball.colors": "配色",
+  "settings.ball.colorsHint": "小球与悬停面板的用色，自己排。样式按顺序往下取，颜色给少了就复用最后一个。",
+  "settings.ball.colorAdd": "添加颜色",
+  "settings.ball.presets": "快捷预设",
+  "settings.ball.slotRemove": "删除这个颜色",
+  "settings.ball.style": "律动样式",
+  "settings.ball.styleHint": "分内外两层，各选一个叠在一起，各绑各的数据源。",
+  "settings.ball.inner": "内圈",
+  "settings.ball.outer": "外圈",
+  "settings.ball.motion": "尺寸与律动",
+  "settings.ball.motionHint": "调小球多大、数据放大多少倍，以及要不要跟着音乐「点头」。",
+  "settings.ball.size": "悬浮球大小",
+  "settings.ball.gain": "显示倍率",
+  "settings.ball.pulse": "随音频律动缩放",
+  "settings.ball.pulseHint": "不是直接按音量缩放：算法看鼓点与响度算出一个「点头」的幅度，再作用到小球大小上。",
+  "settings.ball.pulseAmount": "缩放幅度",
+  "settings.ball.algorithm": "缩放算法",
   "settings.theme.current": "当前",
   "settings.theme.previewLight": "浅色",
   "settings.theme.previewDark": "深色",
@@ -175,22 +179,51 @@ const ZH: Dict = {
   "ballWindow.mediaStopped": "已停止",
   "ballWindow.mediaSession": "媒体会话",
 
-  /* 悬浮球的六种律动样式（名字与说明都由 ball-style.ts 的 id 拼出来） */
+  /* 悬浮球的律动样式（名字与说明都由 ball-style.ts 的 id 拼出来） */
   "ballStyle.source.spectrum": "频谱",
   "ballStyle.source.wave": "波形",
   "ballStyle.source.adaptive": "自适应",
+  "ballStyle.source.level": "响度",
+  "ballStyle.source.peak": "峰值",
+  "ballStyle.source.hint.spectrum": "跟频谱：128 柱对数频率，低音在左、高音在右。",
+  "ballStyle.source.hint.wave": "跟波形：256 点峰谷包络，跟整体起伏与鼓点冲击力。",
+  "ballStyle.source.hint.adaptive": "自适应：每帧比较频谱与波形谁更活跃，谁活跃就用谁。",
+  "ballStyle.source.hint.level": "跟响度（RMS）：整帧一个数，各位置一起涨落，像一圈音量环。",
+  "ballStyle.source.hint.peak": "跟峰值：整帧一个数，鼓点一到就顶上去，比响度更跳。",
+
+  /* 内圈 */
+  "ballStyle.core": "球芯",
+  "ballStyle.hint.core": "一颗静态的渐变球，什么都不跟，安静地待在那里。",
+  "ballStyle.pulse": "脉冲",
+  "ballStyle.hint.pulse": "球芯之外再放几圈随音量涨落的同心圈。",
+  "ballStyle.particles": "粒子",
+  "ballStyle.hint.particles": "一圈细小光点被音乐推开，安静时轻轻呼吸。",
+  "ballStyle.ripple": "涟漪",
+  "ballStyle.hint.ripple": "声压一圈圈荡开，响度越大涟漪越密越亮。",
+  "ballStyle.none": "无",
+  "ballStyle.hint.none": "这一圈什么都不画 —— 只想要另一圈时用它。",
+
+  /* 外圈 */
   "ballStyle.ring": "环柱",
   "ballStyle.hint.ring": "经典环形频谱：一圈柱子的长度就是各频段的能量。",
   "ballStyle.bars": "柱阵",
   "ballStyle.hint.bars": "球体正面一列均衡器柱，低音在左、高音在右。",
   "ballStyle.wave": "示波",
   "ballStyle.hint.wave": "把波形卷成一圈，直接描出峰谷包络的起伏。",
-  "ballStyle.particles": "粒子",
-  "ballStyle.hint.particles": "一圈细小光点被音乐推开，安静时轻轻呼吸。",
-  "ballStyle.ripple": "涟漪",
-  "ballStyle.hint.ripple": "声压一圈圈荡开，响度越大涟漪越密越亮。",
   "ballStyle.laser": "激光",
   "ballStyle.hint.laser": "两道细长的激光线扫过球体，鼓点越强转得越快。",
+
+  /* 随音频律动缩放的算法（id 来自 ball-pulse.ts） */
+  "ballPulse.none": "不缩放",
+  "ballPulse.hint.none": "小球始终是原大小。",
+  "ballPulse.nod": "点头",
+  "ballPulse.hint.nod": "低频一冲击就往下压一下再弹回来，像听歌时跟着点头。",
+  "ballPulse.breathe": "呼吸",
+  "ballPulse.hint.breathe": "跟着整体响度慢慢起伏，没有冲击感。",
+  "ballPulse.pulse": "脉冲",
+  "ballPulse.hint.pulse": "峰值越线时放大一下；阻尼小，所以会弹两下才停。",
+  "ballPulse.sway": "摆动",
+  "ballPulse.hint.sway": "低频越强摆得越快、幅度越大，像跟着节拍轻轻晃。",
 };
 
 const EN: Dict = {
@@ -300,31 +333,33 @@ const EN: Dict = {
 
   "settings.theme.mode": "Dark mode",
   "settings.theme.modeHint":
-    "Chooses the light or dark variant used by both theme sections, for the app and the orb alike.",
+    "Chooses the light or dark variant for the app theme only — the orb is unaffected and always uses its light palette.",
   "settings.theme.mode.light": "Light",
   "settings.theme.mode.dark": "Dark",
   "settings.theme.mode.system": "System",
   "settings.theme.app": "App theme",
   "settings.theme.appHint": "Light preview on the left, dark on the right. Click to apply instantly.",
-  "settings.theme.ball": "Orb colours",
-  "settings.theme.ballHint":
-    "Colours only: the shades used by the ball and its hover panel. The shape comes from the motion style below.",
-  "settings.theme.style": "Motion style",
-  "settings.theme.styleHint":
-    "Shape only: what the ball looks like and how it moves with the music. Combines freely with the colours above.",
-  "settings.theme.ballSource": "Motion data",
-  "settings.theme.ballSourceHint":
-    "Which reading drives the ball: the kernel's 128-bin log spectrum, or its 256-point peak envelope.",
-  "settings.theme.ballSource.spectrum": "Spectrum",
-  "settings.theme.ballSource.wave": "Waveform",
-  "settings.theme.ballSource.adaptive": "Adaptive",
-  "settings.theme.ballSource.hint.spectrum":
-    "Driven by the spectrum: 128 log-spaced bins, bass on the left, treble on the right.",
-  "settings.theme.ballSource.hint.wave":
-    "Driven by the waveform: a 256-point peak envelope, following overall movement and transients.",
-  "settings.theme.ballSource.hint.adaptive":
-    "Adaptive: each frame compares spectrum and waveform and follows whichever is livelier.",
-  "settings.theme.ballSource.fixed": "“{style}” only draws the {source}, so there is nothing to choose here.",
+  "settings.ball.colors": "Colours",
+  "settings.ball.colorsHint":
+    "Your own shades for the ball and its hover panel. Styles take them in order and reuse the last one when you run out.",
+  "settings.ball.colorAdd": "Add colour",
+  "settings.ball.presets": "Quick presets",
+  "settings.ball.slotRemove": "Remove this colour",
+  "settings.ball.style": "Motion style",
+  "settings.ball.styleHint":
+    "Two layers — inner and outer. Pick one for each and they stack, with their own data sources.",
+  "settings.ball.inner": "Inner",
+  "settings.ball.outer": "Outer",
+  "settings.ball.motion": "Size & motion",
+  "settings.ball.motionHint":
+    "How big the ball is, how much the data is amplified, and whether it nods along.",
+  "settings.ball.size": "Ball size",
+  "settings.ball.gain": "Display gain",
+  "settings.ball.pulse": "Scale with the music",
+  "settings.ball.pulseHint":
+    "Not a plain volume follower: the algorithm reads beats and loudness to work out a “nod”, then applies it to the ball's size.",
+  "settings.ball.pulseAmount": "Scaling amount",
+  "settings.ball.algorithm": "Scaling algorithm",
   "settings.theme.current": "Current",
   "settings.theme.previewLight": "Light",
   "settings.theme.previewDark": "Dark",
@@ -363,22 +398,59 @@ const EN: Dict = {
   "ballWindow.mediaStopped": "Stopped",
   "ballWindow.mediaSession": "Media session",
 
-  /* The orb's six motion styles (ids come from ball-style.ts) */
+  /* The orb's motion styles (ids come from ball-style.ts) */
   "ballStyle.source.spectrum": "Spectrum",
   "ballStyle.source.wave": "Waveform",
   "ballStyle.source.adaptive": "Adaptive",
+  "ballStyle.source.level": "Loudness",
+  "ballStyle.source.peak": "Peak",
+  "ballStyle.source.hint.spectrum":
+    "Spectrum: 128 log-spaced bins, bass on the left, treble on the right.",
+  "ballStyle.source.hint.wave":
+    "Waveform: a 256-point peak envelope, following overall movement and transients.",
+  "ballStyle.source.hint.adaptive":
+    "Adaptive: each frame compares spectrum and waveform and follows whichever is livelier.",
+  "ballStyle.source.hint.level":
+    "Loudness (RMS): one number per frame, so every position moves together — a volume ring.",
+  "ballStyle.source.hint.peak":
+    "Peak: one number per frame, jumping up on every beat — twitchier than loudness.",
+
+  /* Inner layer */
+  "ballStyle.core": "Core",
+  "ballStyle.hint.core": "A plain gradient ball that follows nothing — just sits there.",
+  "ballStyle.pulse": "Pulse",
+  "ballStyle.hint.pulse": "The core plus a couple of rings that swell with the volume.",
+  "ballStyle.particles": "Particles",
+  "ballStyle.hint.particles": "A ring of specks pushed outward by the music, breathing when idle.",
+  "ballStyle.ripple": "Ripple",
+  "ballStyle.hint.ripple": "Pressure ripples outward; louder means denser and brighter.",
+  "ballStyle.none": "None",
+  "ballStyle.hint.none": "Draws nothing on this layer — pick it when you only want the other one.",
+
+  /* Outer layer */
   "ballStyle.ring": "Ring bars",
   "ballStyle.hint.ring": "The classic: a ring of bars whose length is each band's energy.",
   "ballStyle.bars": "Bar stack",
   "ballStyle.hint.bars": "A flat equaliser across the ball: bass on the left, treble on the right.",
   "ballStyle.wave": "Oscilloscope",
   "ballStyle.hint.wave": "Wraps the envelope into a ring and traces it point by point.",
-  "ballStyle.particles": "Particles",
-  "ballStyle.hint.particles": "A ring of specks pushed outward by the music, breathing when idle.",
-  "ballStyle.ripple": "Ripple",
-  "ballStyle.hint.ripple": "Pressure ripples outward; louder means denser and brighter.",
   "ballStyle.laser": "Laser",
   "ballStyle.hint.laser": "Two thin beams sweep across the ball, spinning faster on strong beats.",
+
+  /* Scaling algorithms (ids come from ball-pulse.ts) */
+  "ballPulse.none": "Off",
+  "ballPulse.hint.none": "The ball keeps its size.",
+  "ballPulse.nod": "Nod",
+  "ballPulse.hint.nod":
+    "A low-end hit presses it down and it springs back — like nodding along to the beat.",
+  "ballPulse.breathe": "Breathe",
+  "ballPulse.hint.breathe": "Slowly swells with overall loudness, no punch.",
+  "ballPulse.pulse": "Pulse",
+  "ballPulse.hint.pulse":
+    "Flashes bigger whenever the peak crosses the line; low damping, so it bounces twice.",
+  "ballPulse.sway": "Sway",
+  "ballPulse.hint.sway":
+    "The stronger the low end, the faster and wider it sways — a gentle rock on the beat.",
 };
 
 const DICTS: Record<Language, Dict> = { "zh-CN": ZH, "en-US": EN };

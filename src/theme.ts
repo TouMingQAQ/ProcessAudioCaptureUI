@@ -3,42 +3,42 @@
  *
  * 一套主题 = 一份色板（`Palette`），色板里的每个字段都会变成一个 CSS 变量
  * `--ui-<kebab-case>`，页面样式全部读这些变量，所以换主题只是重写一批变量，
- * 不用动任何布局。画布拿不到 CSS 变量，各自从色板直接取色：[`canvasColors`]
- * 给主界面的波形 / 频谱（固定用亮色那份），[`ballOrbColors`] 给悬浮球（跟着明暗）。
+ * 不用动任何布局。主界面的波形 / 频谱画布拿不到 CSS 变量，改由 [`canvasColors`]
+ * 直接从色板取色，而且固定用亮色那一份。
  *
- * 主题分为「应用主题」与「悬浮球主题」两条线，各自都有亮色 / 暗色两份色板；
- * 具体用哪份由深色模式（`light` / `dark` / `system`）决定。
+ * 深色模式（`light` / `dark` / `system`）只作用于**应用主题**；悬浮球不吃明暗 ——
+ * 它是悬在桌面上的一个小球，跟着系统一起变暗只会更难看清。
  *
- * 悬浮球这一侧刻意拆成两件互不相干的事：
+ * 悬浮球这一侧刻意拆成三件互不相干的事：
  *
- * * **配色**（本文件的 `BALL_THEMES`）—— 只管颜色，不管形状；
- * * **律动样式**（`ball-style.ts` 的 `BALL_STYLES`）—— 只管小球长什么样、跟着
- *   频谱还是波形动，里面一个颜色都不写。
+ * * **配色**（本文件）—— 用户自己排的一串**色槽**，样式按需往下取，不够就复用
+ *   最后一槽（见 [`slotColor`]）；外发光、球芯这些由色槽派生，用户不用逐个配；
+ * * **律动样式**（`ball-style.ts`）—— 只管小球长什么样、读哪一份数据，里面一个
+ *   颜色都不写；还分**内圈 / 外圈**两层，各选一个叠加，各绑各的数据源；
+ * * **尺寸与律动缩放**（`ball-pulse.ts`）—— 只管多大，以及"跟着音乐点头"的幅度。
  *
- * 两者自由组合，换样式不会动到配色，换配色也不会改形状。
+ * 三者自由组合：换配色不会改形状，换形状也不会动到颜色。
  */
 
-import {
-  DEFAULT_BALL_STYLE,
-  ballStyleById,
-  resolveDataSource,
-  type BallStyle,
-} from "./ball-style";
+import { ballStyleById, resolveDataSource } from "./ball-style";
 
 export {
   BALL_STYLES,
+  BALL_INNER_STYLES,
+  BALL_OUTER_STYLES,
   BALL_DATA_SOURCES,
   DEFAULT_BALL_DATA_SOURCE,
-  DEFAULT_BALL_STYLE,
+  DEFAULT_BALL_INNER_STYLE,
+  DEFAULT_BALL_OUTER_STYLE,
   ballStyleById,
-  currentBallDataSource,
-  currentBallStyle,
+  ballStylesOf,
+  currentBallInnerStyle,
+  currentBallOuterStyle,
+  currentBallInnerSource,
+  currentBallOuterSource,
   resolveDataSource,
 } from "./ball-style";
-export type { BallDataSource, BallStyle } from "./ball-style";
-
-/** 兜底：还没套过样式时也能画出一颗球（`DEFAULT_BALL_STYLE` 一定在表里）。 */
-export const FALLBACK_BALL_STYLE: BallStyle = ballStyleById(DEFAULT_BALL_STYLE);
+export type { BallDataSource, BallLayer, BallStyle } from "./ball-style";
 
 /* ------------------------------------------------------------------ 类型 */
 
@@ -95,16 +95,24 @@ export interface Palette {
   vizGlow: string;
 }
 
-/** 悬浮球小球的配色。形状由「律动样式」决定，这里只有颜色。 */
-export interface OrbPalette {
-  /** 外发光（径向渐变的起点色）。 */
+/**
+ * 小球绘制用的一组颜色。
+ *
+ * 用户维护的是一串**有序色槽**（`slots`），样式按自己的需要往下取：不够就复用最后一槽
+ * （见 [`slotColor`]）。`halo` / `core` / `pulse` 这些是由色槽算出来的派生色，给绘制
+ * 代码与 CSS 用，用户不必逐个去配 —— 换一个主色，整颗球跟着换。
+ */
+export interface OrbColors {
+  /** 用户自定义色槽（有序，至少一个）。 */
+  slots: string[];
+  /** 外发光（径向渐变：中心亮、边缘透明）。 */
   halo: string;
   /** 外发光的中段色。 */
   haloMid: string;
-  /** 内层球体的渐变两色。 */
+  /** 内层球体的渐变起止色。 */
   core: string;
   coreEdge: string;
-  /** 三色渐变（按角度 / 位置 / 圈层插值）。 */
+  /** 三色渐变（按角度 / 位置 / 圈层插值），供 CSS 装饰用。 */
   barA: string;
   barB: string;
   barC: string;
@@ -112,12 +120,8 @@ export interface OrbPalette {
   pulse: string;
   /** 待机时显示的音符颜色。 */
   glyph: string;
+  /** 投影。 */
   shadow: string;
-}
-
-export interface BallSkin {
-  panel: Palette;
-  orb: OrbPalette;
 }
 
 export interface AppTheme {
@@ -125,13 +129,6 @@ export interface AppTheme {
   name: Bi;
   light: Palette;
   dark: Palette;
-}
-
-export interface BallTheme {
-  id: string;
-  name: Bi;
-  light: BallSkin;
-  dark: BallSkin;
 }
 
 /* -------------------------------------------------------------- 颜色工具 */
@@ -278,55 +275,73 @@ function buildPalette(seed: AppSeed, appearance: Appearance): Palette {
   };
 }
 
-interface BallSeed {
-  /** 面板底色 [亮, 暗]。 */
-  panel: [string, string];
-  /** 面板正文 [亮, 暗]。 */
-  ink: [string, string];
-  accent: string;
-  accent2: string;
-  /** 环形频谱三色（亮色模式）。 */
-  bars: [string, string, string];
-  barsDark?: [string, string, string];
-  /** 内层球体渐变两色（亮色模式）。 */
-  core: [string, string];
-  coreDark?: [string, string];
-  /** 外发光起点色（亮色模式）。 */
-  halo: string;
-  haloDark?: string;
-  glyph: string;
+/* ------------------------------------------------------------ 悬浮球配色 */
+
+/** 还没配过颜色时用的那一个。 */
+export const DEFAULT_BALL_COLOR = "#66ccff";
+
+/** 色槽上限：再多也用不上，界面与绘制都按它截断。 */
+export const MAX_BALL_COLORS = 8;
+
+function isHexColor(value: string): boolean {
+  return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(value.trim());
 }
 
-function buildBallSkin(seed: BallSeed, appearance: Appearance): BallSkin {
-  const dark = appearance === "dark";
-  const bars = dark && seed.barsDark ? seed.barsDark : seed.bars;
-  const core = dark && seed.coreDark ? seed.coreDark : seed.core;
-  const halo = dark && seed.haloDark ? seed.haloDark : seed.halo;
+/** 按槽位取色：越界就复用最后一槽。 */
+function pick(slots: string[], index: number): string {
+  const at = Math.min(Math.max(Math.round(index), 0), slots.length - 1);
+  return slots[at] ?? DEFAULT_BALL_COLOR;
+}
 
+/**
+ * 收敛用户色槽：丢掉不合法的写法、统一小写、截到 [`MAX_BALL_COLORS`]，并且**至少留一个**。
+ *
+ * 空数组表示"还没配过"（旧配置升级上来就是这样），这里补成默认色 —— 所以调用方拿到的
+ * 结果永远可以直接拿去画。
+ */
+export function normalizeBallColors(colors: readonly string[] | null | undefined): string[] {
+  const cleaned = (colors ?? [])
+    .map((color) => color.trim().toLowerCase())
+    .filter(isHexColor)
+    .slice(0, MAX_BALL_COLORS);
+  return cleaned.length > 0 ? cleaned : [DEFAULT_BALL_COLOR];
+}
+
+/**
+ * 样式要第 `index` 个颜色时调它。
+ *
+ * 色槽不够就**复用最后一槽** —— 用户只给一个颜色，整套样式照样能画出来，只是变成单色。
+ */
+export function slotColor(colors: OrbColors, index: number): string {
+  return pick(colors.slots, index);
+}
+
+/** 三色渐变取色：`t`（0..1）在槽 0 → 1 → 2 之间插值；色槽不足时自然退化成纯色。 */
+export function slotRamp(colors: OrbColors, t: number): string {
+  const x = Math.min(1, Math.max(0, t));
+  const a = pick(colors.slots, 0);
+  const b = pick(colors.slots, 1);
+  const c = pick(colors.slots, 2);
+  return x < 0.5 ? mix(a, b, x * 2) : mix(b, c, (x - 0.5) * 2);
+}
+
+/** 色槽 → 绘制配色。派生规则集中在这里：换一个主色，整颗球跟着换。 */
+export function orbColorsFrom(colors: readonly string[] | null | undefined): OrbColors {
+  const slots = normalizeBallColors(colors);
+  const main = pick(slots, 0);
   return {
-    // 面板其实就是一套小色板：骨架复用 buildPalette，省得再维护一份描边 / 次级文字
-    panel: buildPalette(
-      {
-        accent: seed.accent,
-        accent2: seed.accent2,
-        bg: seed.panel,
-        card: seed.panel,
-        ink: seed.ink,
-      },
-      appearance,
-    ),
-    orb: {
-      halo: alpha(halo, dark ? 0.55 : 0.42),
-      haloMid: alpha(seed.accent2, dark ? 0.3 : 0.24),
-      core: core[0],
-      coreEdge: core[1],
-      barA: bars[0],
-      barB: bars[1],
-      barC: bars[2],
-      pulse: seed.accent,
-      glyph: seed.glyph,
-      shadow: dark ? "rgba(0, 0, 0, 0.6)" : alpha(seed.accent, 0.45),
-    },
+    slots,
+    halo: alpha(main, 0.42),
+    haloMid: alpha(pick(slots, 1), 0.24),
+    // 球芯是"亮面"：主色往白里提，深色桌面上才不至于糊成一团
+    core: mix(main, "#ffffff", 0.74),
+    coreEdge: mix(main, "#ffffff", 0.16),
+    barA: pick(slots, 0),
+    barB: pick(slots, 1),
+    barC: pick(slots, 2),
+    pulse: pick(slots, slots.length - 1),
+    glyph: main,
+    shadow: alpha(main, 0.45),
   };
 }
 
@@ -482,189 +497,38 @@ export const APP_THEMES: AppTheme[] = APP_SEEDS.map(({ id, name, ...seed }) => (
 
 export const DEFAULT_APP_THEME = "solid";
 
-/* ---------------------------------------------------------- 悬浮球主题表 */
+/* -------------------------------------------------------- 悬浮球配色预设 */
 
-interface BallSeedEntry extends BallSeed {
+export interface BallColorPreset {
   id: string;
   name: Bi;
+  /** 三个主色：点一下铺进色槽，之后还能接着改。 */
+  colors: [string, string, string];
 }
 
-const BALL_SEEDS: BallSeedEntry[] = [
-  {
-    id: "solid",
-    name: { zh: "纯色", en: "Solid" },
-    panel: ["#ffffff", "#1d2027"],
-    ink: ["#22262e", "#e6e9ef"],
-    accent: "#3f7dff",
-    accent2: "#6b9bff",
-    bars: ["#9fc4ff", "#7f9bf0", "#5f7ce0"],
-    barsDark: ["#3f6fd8", "#5f7ae0", "#8f9bf5"],
-    core: ["#ffffff", "#eaf0ff"],
-    coreDark: ["#2a3350", "#1b2438"],
-    halo: "#3f7dff",
-    haloDark: "#5c95ff",
-    glyph: "#3f7dff",
-  },
-  {
-    id: "macaron",
-    name: { zh: "马卡龙", en: "Macaron" },
-    panel: ["#fffdfd", "#241d2b"],
-    ink: ["#5a4a5e", "#f0e6f0"],
-    accent: "#ff8fb8",
-    accent2: "#b8a4ea",
-    bars: ["#9fd4ff", "#c9a9f2", "#ff8fb8"],
-    barsDark: ["#6fb4e8", "#a086e0", "#ff8fb8"],
-    core: ["#ffffff", "#ffeaf4"],
-    coreDark: ["#38263a", "#2a1c2c"],
-    halo: "#ffb0d0",
-    haloDark: "#ff8fb8",
-    glyph: "#ff8fb8",
-  },
-  {
-    id: "sakura",
-    name: { zh: "樱花", en: "Sakura" },
-    panel: ["#fffafc", "#2a1c22"],
-    ink: ["#4b3540", "#f6e6ec"],
-    accent: "#e8618c",
-    accent2: "#f0a5bd",
-    bars: ["#ffd0dd", "#f7a8c4", "#e8618c"],
-    barsDark: ["#b06a86", "#e0819f", "#ff91b4"],
-    core: ["#ffffff", "#ffeef4"],
-    coreDark: ["#3d242f", "#2c1a22"],
-    halo: "#f7a8c4",
-    haloDark: "#ff91b4",
-    glyph: "#e8618c",
-  },
-  {
-    id: "ocean",
-    name: { zh: "深海", en: "Ocean" },
-    panel: ["#fafdff", "#122430"],
-    ink: ["#22384a", "#dceaf2"],
-    accent: "#0e86c4",
-    accent2: "#3fb6c9",
-    bars: ["#7fd0f0", "#57b8e0", "#2f8fd0"],
-    barsDark: ["#2d7fb8", "#3aa8c8", "#4fd6d0"],
-    core: ["#ffffff", "#e8f7ff"],
-    coreDark: ["#153346", "#0e2230"],
-    halo: "#57b8e0",
-    haloDark: "#4fd6d0",
-    glyph: "#0e86c4",
-  },
-  {
-    id: "forest",
-    name: { zh: "苔原", en: "Forest" },
-    panel: ["#fbfefb", "#16241c"],
-    ink: ["#2b3a2e", "#dfeee2"],
-    accent: "#3f8f5f",
-    accent2: "#7fbf6a",
-    bars: ["#a8d98f", "#6cc08a", "#3f9f7f"],
-    barsDark: ["#3f7f5f", "#5aa87a", "#7fc98a"],
-    core: ["#ffffff", "#ecf9ee"],
-    coreDark: ["#1c3524", "#132418"],
-    halo: "#7fbf6a",
-    haloDark: "#7fc98a",
-    glyph: "#3f8f5f",
-  },
-  {
-    id: "sunset",
-    name: { zh: "落日", en: "Sunset" },
-    panel: ["#fffcf7", "#2a1e19"],
-    ink: ["#4a352c", "#f6e6dc"],
-    accent: "#e8763f",
-    accent2: "#e05a7a",
-    bars: ["#ffc98f", "#ff9f72", "#e8608f"],
-    barsDark: ["#c07a3f", "#e8845f", "#f06f92"],
-    core: ["#ffffff", "#fff0e2"],
-    coreDark: ["#40281d", "#2e1b15"],
-    halo: "#ff9f72",
-    haloDark: "#f06f92",
-    glyph: "#e8763f",
-  },
-  {
-    id: "grape",
-    name: { zh: "葡萄紫", en: "Grape" },
-    panel: ["#fdfbff", "#211a33"],
-    ink: ["#38304e", "#e8e2f8"],
-    accent: "#7b5cd6",
-    accent2: "#a86ce0",
-    bars: ["#b39cf0", "#9b7ae8", "#c07ae0"],
-    barsDark: ["#6f5cb8", "#8f6fe0", "#b47ce0"],
-    core: ["#ffffff", "#efe9ff"],
-    coreDark: ["#2b2246", "#1d1733"],
-    halo: "#a86ce0",
-    haloDark: "#c78ce8",
-    glyph: "#7b5cd6",
-  },
-  {
-    id: "gold",
-    name: { zh: "流金", en: "Gold" },
-    panel: ["#fffdf6", "#241f16"],
-    ink: ["#4a3d22", "#f3e9d2"],
-    accent: "#d0a24c",
-    accent2: "#e8c06a",
-    bars: ["#ffe6a8", "#f0c46a", "#d09a3c"],
-    barsDark: ["#a8802f", "#d3a748", "#f0cf7a"],
-    core: ["#ffffff", "#fff6e2"],
-    coreDark: ["#3b3020", "#281f12"],
-    halo: "#f0c46a",
-    haloDark: "#ffd98a",
-    glyph: "#d0a24c",
-  },
-  {
-    id: "neon",
-    name: { zh: "霓虹", en: "Neon" },
-    panel: ["#fdfaff", "#161629"],
-    ink: ["#2a2b4a", "#eaeaff"],
-    accent: "#7a3ff0",
-    accent2: "#00b8d4",
-    bars: ["#00e5ff", "#7a3ff0", "#ff3fb0"],
-    barsDark: ["#22e0ff", "#b46bff", "#ff3fb0"],
-    core: ["#ffffff", "#f0eaff"],
-    coreDark: ["#241a45", "#160f2e"],
-    halo: "#7a3ff0",
-    haloDark: "#b46bff",
-    glyph: "#7a3ff0",
-  },
-  {
-    id: "graphite",
-    name: { zh: "石墨", en: "Graphite" },
-    panel: ["#ffffff", "#1c1f24"],
-    ink: ["#2b2f36", "#e4e7ec"],
-    accent: "#5a6472",
-    accent2: "#8b94a3",
-    bars: ["#b6bec9", "#8b94a3", "#5a6472"],
-    barsDark: ["#4a525e", "#6f7a89", "#9aa4b2"],
-    core: ["#ffffff", "#f0f2f5"],
-    coreDark: ["#272b31", "#181b1f"],
-    halo: "#8b94a3",
-    haloDark: "#9aa4b2",
-    glyph: "#5a6472",
-  },
-  {
-    id: "mint",
-    name: { zh: "薄荷", en: "Mint" },
-    panel: ["#fbfefd", "#132523"],
-    ink: ["#24403c", "#dbf0ec"],
-    accent: "#1fa88f",
-    accent2: "#57c9d8",
-    bars: ["#8fe8d0", "#5fd0c0", "#3fb8d0"],
-    barsDark: ["#2f8f80", "#3fb8a8", "#5fd0e0"],
-    core: ["#ffffff", "#e8fdf8"],
-    coreDark: ["#16362f", "#0d241f"],
-    halo: "#5fd0c0",
-    haloDark: "#5fd0e0",
-    glyph: "#1fa88f",
-  },
+/**
+ * 快捷预设 —— 颜色本身由用户自由配（见 `ballColors`），这里只是几组现成的起手式。
+ *
+ * 每套取的是原来那版"环形频谱三色"，铺进色槽后照样能单独改某一槽。
+ */
+export const BALL_COLOR_PRESETS: BallColorPreset[] = [
+  { id: "solid", name: { zh: "纯色", en: "Solid" }, colors: ["#9fc4ff", "#7f9bf0", "#5f7ce0"] },
+  { id: "macaron", name: { zh: "马卡龙", en: "Macaron" }, colors: ["#9fd4ff", "#c9a9f2", "#ff8fb8"] },
+  { id: "sakura", name: { zh: "樱花", en: "Sakura" }, colors: ["#ffd0dd", "#f7a8c4", "#e8618c"] },
+  { id: "ocean", name: { zh: "深海", en: "Ocean" }, colors: ["#7fd0f0", "#57b8e0", "#2f8fd0"] },
+  { id: "forest", name: { zh: "苔原", en: "Forest" }, colors: ["#a8d98f", "#6cc08a", "#3f9f7f"] },
+  { id: "sunset", name: { zh: "落日", en: "Sunset" }, colors: ["#ffc98f", "#ff9f72", "#e8608f"] },
+  { id: "grape", name: { zh: "葡萄紫", en: "Grape" }, colors: ["#b39cf0", "#9b7ae8", "#c07ae0"] },
+  { id: "gold", name: { zh: "流金", en: "Gold" }, colors: ["#ffe6a8", "#f0c46a", "#d09a3c"] },
+  { id: "neon", name: { zh: "霓虹", en: "Neon" }, colors: ["#00e5ff", "#7a3ff0", "#ff3fb0"] },
+  { id: "graphite", name: { zh: "石墨", en: "Graphite" }, colors: ["#b6bec9", "#8b94a3", "#5a6472"] },
+  { id: "mint", name: { zh: "薄荷", en: "Mint" }, colors: ["#8fe8d0", "#5fd0c0", "#3fb8d0"] },
 ];
 
-export const BALL_THEMES: BallTheme[] = BALL_SEEDS.map(({ id, name, ...seed }) => ({
-  id,
-  name,
-  light: buildBallSkin(seed, "light"),
-  dark: buildBallSkin(seed, "dark"),
-}));
-
-export const DEFAULT_BALL_THEME = "solid";
+/** 按 id 找预设（旧配置里的 `ballTheme` 就是预设 id，升级时用它填色槽）。 */
+export function ballPresetById(id: string): BallColorPreset | null {
+  return BALL_COLOR_PRESETS.find((preset) => preset.id === id) ?? null;
+}
 
 /* ------------------------------------------------------------ 变量应用 */
 
@@ -683,17 +547,46 @@ const kebab = (key: string) => key.replace(/[A-Z]|\d+/g, (m) => `-${m.toLowerCas
  * `var(--ui-accent)` 之类的样式 —— 预览和真实界面共用一份 CSS 规则，
  * 不会出现"预览挺好看、套上去不是那样"。
  */
-export function paletteStyle(palette: Palette, orb?: OrbPalette): Record<string, string> {
+export function paletteStyle(palette: Palette): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(palette)) {
     if (value) out[`--ui-${kebab(key)}`] = value;
   }
-  if (orb) {
-    for (const [key, value] of Object.entries(orb)) {
-      if (value) out[`--ui-orb-${kebab(key)}`] = value;
-    }
+  return out;
+}
+
+/**
+ * 小球配色 → `--ui-orb-*`（悬浮球窗口的光晕、悬停面板装饰、样式卡片预览都读它）。
+ *
+ * `slots` 本身是数组，不进 CSS —— 它只给画布绘制用。
+ */
+export function orbStyle(orb: OrbColors): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(orb)) {
+    if (key === "slots" || !value) continue;
+    out[`--ui-orb-${kebab(key)}`] = value;
   }
   return out;
+}
+
+/**
+ * 悬浮球悬停面板的色板。
+ *
+ * 面板不跟着小球一起花：底色与正文固定用中性亮色（悬浮球不吃明暗），只有强调色
+ * 取自用户色槽 —— 这样换配色时面板的按钮、焦点圈会跟着变，但读起来仍然清楚。
+ */
+function ballPanelPalette(orb: OrbColors): Palette {
+  const light: [string, string] = ["#ffffff", "#ffffff"];
+  return buildPalette(
+    {
+      accent: slotColor(orb, 0),
+      accent2: slotColor(orb, 1),
+      bg: light,
+      card: light,
+      ink: ["#22262e", "#22262e"],
+    },
+    "light",
+  );
 }
 
 /** 把变量写进指定元素（默认是 `<html>`）。 */
@@ -703,10 +596,6 @@ export function applyVars(target: HTMLElement, vars: Record<string, string>) {
 
 export function appThemeById(id: string): AppTheme {
   return APP_THEMES.find((theme) => theme.id === id) ?? APP_THEMES[0];
-}
-
-export function ballThemeById(id: string): BallTheme {
-  return BALL_THEMES.find((theme) => theme.id === id) ?? BALL_THEMES[0];
 }
 
 /** 系统当前是不是深色。 */
@@ -737,29 +626,42 @@ export function applyAppTheme(themeId: string, mode: ThemeMode): Appearance {
   return appearance;
 }
 
-/** 悬浮球主题：面板与小球一起换色（形状不归它管，见 [`applyBallLook`]）。 */
-export function applyBallTheme(themeId: string, mode: ThemeMode): Appearance {
-  const appearance = resolveAppearance(mode);
-  const skin = ballThemeById(themeId)[appearance];
-  applyVars(document.documentElement, paletteStyle(skin.panel, skin.orb));
-  markAppearance(appearance);
-  return appearance;
+/**
+ * 悬浮球配色：把用户色槽铺成整套变量（面板 + 小球，形状不归它管，见 [`applyBallLook`]）。
+ *
+ * 不吃深色模式：色槽只有一份，切浅色 / 深色 / 跟随系统都不动它。写进
+ * `<html data-appearance>` 的也一直是 `light`，这样窗口里的原生控件与面板配色一致。
+ * 主窗口的明暗不受影响 —— 那是另一个 WebView。
+ */
+export function applyBallColors(colors: readonly string[]): void {
+  const orb = orbColorsFrom(colors);
+  applyVars(document.documentElement, {
+    ...paletteStyle(ballPanelPalette(orb)),
+    ...orbStyle(orb),
+  });
+  markAppearance("light");
 }
 
 /**
- * 落地悬浮球的「律动样式」与「数据源」。
+ * 落地悬浮球的「律动样式」与两圈各自的数据源。
  *
- * 只写两个 `data-*`，同时给两边用：
- * * `ball-render.ts` 从 [`currentBallStyle`] / [`currentBallDataSource`] 读；
- * * `ball.css` 靠 `[data-ball-style=…]` 给不同样式配不同的待机动画（例如涟漪不显示音符）。
+ * 只写几个 `data-*`，给两边用：
+ * * `ball-render.ts` 侧通过 `ball-style.ts` 的 `currentBall*Style()` 读；
+ * * `ball.css` 也可以通过 `[data-ball-inner=…]` 给特定样式加待机动画。
  */
-export function applyBallLook(styleId: string, source: string): void {
-  const style = ballStyleById(styleId);
+export function applyBallLook(
+  innerStyleId: string,
+  outerStyleId: string,
+  innerSource: string,
+  outerSource: string,
+): void {
+  const inner = ballStyleById(innerStyleId, "inner");
+  const outer = ballStyleById(outerStyleId, "outer");
   const root = document.documentElement;
-  root.dataset.ballStyle = style.id;
-  root.dataset.ballSource = resolveDataSource(style.id, source);
-  // 样式自己偏好的那份数据，卡片上那行小字要用（与用户选的可能不同）
-  root.dataset.ballStyleDefault = style.mode;
+  root.dataset.ballInner = inner.id;
+  root.dataset.ballOuter = outer.id;
+  root.dataset.ballInnerSource = resolveDataSource(innerSource, inner.mode);
+  root.dataset.ballOuterSource = resolveDataSource(outerSource, outer.mode);
 }
 
 function markAppearance(appearance: Appearance) {
@@ -767,22 +669,6 @@ function markAppearance(appearance: Appearance) {
   root.dataset.appearance = appearance;
   // 让浏览器原生控件（滚动条、下拉框）跟着走
   root.style.colorScheme = appearance;
-}
-
-/**
- * 按当前明暗取一套小球配色。
- *
- * 悬浮球窗口要画布颜色，但它只有「悬浮球主题 id」这一份设置，也只能从这里拿 ——
- * 明暗则由 `<html data-appearance>` 决定（`applyBallTheme` 刚写过）。
- */
-export function ballOrbColors(themeId: string): OrbPalette {
-  const appearance: Appearance = document.documentElement.dataset.appearance === "dark" ? "dark" : "light";
-  return ballThemeById(themeId)[appearance].orb;
-}
-
-/** 取指定主题在指定明暗下的小球配色（调用方自己指定，不读页面状态）。 */
-export function orbPaletteFor(themeId: string, appearance: Appearance): OrbPalette {
-  return ballThemeById(themeId)[appearance].orb;
 }
 
 /**

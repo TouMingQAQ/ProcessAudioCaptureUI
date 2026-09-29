@@ -992,7 +992,8 @@ body {
   color: var(--ui-text);
 }
 
-.theme-half[data-appearance="light"] {
+/* 中间那条分割线只在左右两半并排时才有意义：悬浮球配色的卡片只有浅色一半 */
+.theme-half[data-appearance="light"]:not(:only-child) {
   border-right: 1px solid var(--ui-line);
 }
 
@@ -1101,9 +1102,238 @@ body {
   color: var(--ui-text-faint);
 }
 
-/* 数据源那一排：样式只认一种数据时整排收起来 */
+/* ------------------------------------------------- 可折叠区块（悬浮球页） */
+
+.set-block.is-collapsible {
+  border: 1.5px solid var(--ui-line);
+  border-radius: 16px;
+  background: var(--ui-surface-soft);
+  overflow: hidden;
+}
+
+.set-block-head.is-collapsible {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 12px 14px;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.set-block-head.is-collapsible:hover {
+  background: var(--ui-line);
+}
+
+.set-block-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 折叠箭头：展开时朝下，收起时转回朝右 */
+.collapse-caret {
+  flex: none;
+  width: 0;
+  height: 0;
+  margin-top: 6px;
+  border-left: 5px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  color: var(--ui-text-dim);
+  transform: rotate(90deg);
+  transition: transform 0.16s ease;
+}
+
+.set-block[data-collapsed="true"] .collapse-caret {
+  transform: rotate(0deg);
+}
+
+.set-block-body {
+  padding: 0 14px 14px;
+}
+
+.set-block[data-collapsed="true"] .set-block-body {
+  display: none;
+}
+
+.set-subhead {
+  margin: 14px 0 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ui-text-dim);
+}
+
+/* ------------------------------------------------------- 色槽与快捷预设 */
+
+.color-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.color-slot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.slot-swatch {
+  flex: none;
+  width: 34px;
+  height: 26px;
+  padding: 0;
+  border: 1.5px solid var(--ui-line-strong);
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.slot-swatch::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+.slot-swatch::-webkit-color-swatch {
+  border: 0;
+  border-radius: 5px;
+}
+
+.slot-text {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 9px;
+  border-radius: 9px;
+  border: 1.5px solid var(--ui-line);
+  background: var(--ui-field);
+  color: var(--ui-text);
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+.slot-remove {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  border: 1.5px solid var(--ui-line);
+  background: transparent;
+  color: var(--ui-text-dim);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.slot-remove:hover:not(:disabled) {
+  border-color: var(--ui-danger);
+  color: var(--ui-danger);
+}
+
+.slot-remove:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.color-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+}
+
+.preset-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px;
+  border-radius: 11px;
+  border: 1.5px solid var(--ui-line);
+  background: var(--ui-surface-solid);
+  font-family: inherit;
+  cursor: pointer;
+  transition: transform 0.14s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.preset-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--ui-line-strong);
+}
+
+.preset-card[aria-pressed="true"] {
+  border-color: var(--ui-accent);
+  box-shadow: 0 0 0 3px var(--ui-line);
+}
+
+.preset-band {
+  display: flex;
+  height: 14px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.preset-band i {
+  flex: 1;
+}
+
+.preset-name {
+  font-size: 10.5px;
+  color: var(--ui-text-dim);
+  text-align: center;
+}
+
+/* ---------------------------------------------------------- 尺寸与律动 */
+
+.set-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.set-row + .set-row {
+  margin-top: 9px;
+}
+
 .set-row[hidden] {
   display: none;
+}
+
+.set-label {
+  flex: none;
+  min-width: 76px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ui-text-dim);
+}
+
+.set-value {
+  flex: none;
+  min-width: 34px;
+  text-align: right;
+  font-size: 11.5px;
+  color: var(--ui-text-dim);
+}
+
+.slider {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--ui-accent);
+}
+
+.segmented-sm .seg {
+  padding: 5px 10px;
+  font-size: 11px;
+}
+
+.segmented.is-disabled {
+  opacity: 0.45;
+  pointer-events: none;
 }
 
 /* 迷你主界面 */
@@ -1179,36 +1409,7 @@ body {
   height: 46%;
 }
 
-/* 迷你悬浮球 */
-.mock-orb {
-  position: relative;
-  flex: 1;
-  display: grid;
-  place-items: center;
-}
-
-.mock-orb-halo {
-  position: absolute;
-  width: 74%;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background: radial-gradient(circle, var(--ui-orb-halo) 0%, transparent 72%);
-}
-
-.mock-orb-ring {
-  width: 52%;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  border: 3px dotted var(--ui-orb-bar-b);
-}
-
-.mock-orb-core {
-  position: absolute;
-  width: 24%;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, var(--ui-orb-core), var(--ui-orb-core-edge));
-}
+/* 迷你悬浮球的样式已随「自定义色槽」一并移除：配色预设改画三条颜色带 */
 
 /* ------------------------------------------------------------ 内核 tab */
 

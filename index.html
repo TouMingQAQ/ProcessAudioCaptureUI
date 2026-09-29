@@ -226,7 +226,7 @@
                 <div class="set-block-head">
                   <h3 data-i18n="settings.theme.mode">深色模式</h3>
                   <p data-i18n="settings.theme.modeHint">
-                    决定「主题」与「悬浮球」两处用白天还是黑夜的那一份，两边同时生效。
+                    只决定应用主题用白天还是黑夜的那一份；悬浮球不跟着变，固定用浅色那份。
                   </p>
                 </div>
                 <div id="theme-mode-group" class="segmented" role="group">
@@ -261,52 +261,103 @@
 
             <!-- -------------------------------------------------- 悬浮球 -->
             <div class="settings-pane" data-pane="ball">
-              <section class="set-block">
-                <div class="set-block-head is-row">
-                  <div>
-                    <h3 data-i18n="settings.theme.ball">悬浮球配色</h3>
-                    <p data-i18n="settings.theme.ballHint">
-                      只管颜色：小球与悬停面板的用色。形状由下面的「律动样式」决定。
+              <!-- 配色：可折叠 -->
+              <section class="set-block is-collapsible" data-collapsed="false">
+                <button class="set-block-head is-collapsible" type="button" aria-expanded="true">
+                  <span class="collapse-caret" aria-hidden="true"></span>
+                  <span class="set-block-text">
+                    <h3 data-i18n="settings.ball.colors">配色</h3>
+                    <p data-i18n="settings.ball.colorsHint">
+                      小球与悬停面板的用色，自己排。样式按顺序往下取，颜色给少了就复用最后一个。
                     </p>
-                  </div>
-                  <button id="ball-reset" class="btn btn-ghost" type="button" data-i18n="settings.theme.reset">
-                    恢复默认
-                  </button>
-                </div>
-                <div id="ball-theme-grid" class="theme-grid"></div>
-              </section>
-
-              <section class="set-block">
-                <div class="set-block-head">
-                  <h3 data-i18n="settings.theme.style">律动样式</h3>
-                  <p data-i18n="settings.theme.styleHint">
-                    只管形状：小球长什么样、怎么跟着音乐动。颜色与上面的配色自由组合。
-                  </p>
-                </div>
-                <div id="ball-style-grid" class="style-grid"></div>
-              </section>
-
-              <section class="set-block">
-                <div class="set-block-head">
-                  <h3 data-i18n="settings.theme.ballSource">律动数据</h3>
-                  <p data-i18n="settings.theme.ballSourceHint">
-                    小球读哪一份数据来律动：内核的 128 柱对数频谱，或 256 点峰谷包络波形。
-                  </p>
-                </div>
-                <div id="ball-source-row" class="set-row">
-                  <div id="ball-source-group" class="segmented" role="group">
-                    <button class="seg" type="button" data-source="spectrum" data-i18n="settings.theme.ballSource.spectrum">
-                      频谱
+                  </span>
+                </button>
+                <div class="set-block-body">
+                  <div id="ball-color-slots" class="color-slots"></div>
+                  <div class="color-actions">
+                    <button id="ball-color-add" class="btn btn-ghost" type="button" data-i18n="settings.ball.colorAdd">
+                      添加颜色
                     </button>
-                    <button class="seg" type="button" data-source="wave" data-i18n="settings.theme.ballSource.wave">
-                      波形
-                    </button>
-                    <button class="seg" type="button" data-source="adaptive" data-i18n="settings.theme.ballSource.adaptive">
-                      自适应
+                    <button id="ball-reset" class="btn btn-ghost" type="button" data-i18n="settings.theme.reset">
+                      恢复默认
                     </button>
                   </div>
+                  <div class="set-subhead" data-i18n="settings.ball.presets">快捷预设</div>
+                  <div id="ball-color-presets" class="preset-grid"></div>
                 </div>
-                <p id="ball-source-note" class="set-note"></p>
+              </section>
+
+              <!-- 样式：可折叠 -->
+              <section class="set-block is-collapsible" data-collapsed="false">
+                <button class="set-block-head is-collapsible" type="button" aria-expanded="true">
+                  <span class="collapse-caret" aria-hidden="true"></span>
+                  <span class="set-block-text">
+                    <h3 data-i18n="settings.ball.style">律动样式</h3>
+                    <p data-i18n="settings.ball.styleHint">
+                      分内外两层，各选一个叠在一起，各绑各的数据源。
+                    </p>
+                  </span>
+                </button>
+                <div class="set-block-body">
+                  <div class="set-row">
+                    <span class="set-label" data-i18n="settings.ball.inner">内圈</span>
+                    <div id="ball-inner-source" class="segmented segmented-sm" role="group"></div>
+                  </div>
+                  <div id="ball-inner-grid" class="style-grid"></div>
+                  <p id="ball-inner-note" class="set-note"></p>
+
+                  <div class="set-row">
+                    <span class="set-label" data-i18n="settings.ball.outer">外圈</span>
+                    <div id="ball-outer-source" class="segmented segmented-sm" role="group"></div>
+                  </div>
+                  <div id="ball-outer-grid" class="style-grid"></div>
+                  <p id="ball-outer-note" class="set-note"></p>
+                </div>
+              </section>
+
+              <!-- 尺寸与律动：可折叠 -->
+              <section class="set-block is-collapsible" data-collapsed="false">
+                <button class="set-block-head is-collapsible" type="button" aria-expanded="true">
+                  <span class="collapse-caret" aria-hidden="true"></span>
+                  <span class="set-block-text">
+                    <h3 data-i18n="settings.ball.motion">尺寸与律动</h3>
+                    <p data-i18n="settings.ball.motionHint">
+                      调小球多大、数据放大多少倍，以及要不要跟着音乐"点头"。
+                    </p>
+                  </span>
+                </button>
+                <div class="set-block-body">
+                  <div class="set-row">
+                    <span class="set-label" data-i18n="settings.ball.size">悬浮球大小</span>
+                    <input id="ball-size" class="slider" type="range" min="0" max="3" step="0.1" value="1" />
+                    <span id="ball-size-value" class="set-value mono">1.0</span>
+                  </div>
+                  <div class="set-row">
+                    <span class="set-label" data-i18n="settings.ball.gain">显示倍率</span>
+                    <input id="ball-gain" class="slider" type="range" min="0" max="5" step="0.1" value="1" />
+                    <span id="ball-gain-value" class="set-value mono">1.0</span>
+                  </div>
+
+                  <label class="switch switch-block">
+                    <input id="ball-pulse" type="checkbox" />
+                    <span data-i18n="settings.ball.pulse">随音频律动缩放</span>
+                  </label>
+                  <p class="set-note" data-i18n="settings.ball.pulseHint">
+                    不是直接按音量缩放：算法看鼓点与响度算出一个"点头"的幅度，再作用到小球大小上。
+                  </p>
+
+                  <div class="set-row">
+                    <span class="set-label" data-i18n="settings.ball.pulseAmount">缩放幅度</span>
+                    <input id="ball-pulse-amount" class="slider" type="range" min="1" max="3" step="0.1" value="1" />
+                    <span id="ball-pulse-amount-value" class="set-value mono">1.0</span>
+                  </div>
+
+                  <div class="set-row">
+                    <span class="set-label" data-i18n="settings.ball.algorithm">缩放算法</span>
+                    <div id="ball-pulse-group" class="segmented segmented-sm" role="group"></div>
+                  </div>
+                  <p id="ball-pulse-note" class="set-note"></p>
+                </div>
               </section>
             </div>
 

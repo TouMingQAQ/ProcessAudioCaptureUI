@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { BallDataSource } from "./ball-style";
 import type { Language } from "./i18n";
 import type { ThemeMode } from "./theme";
 
@@ -113,17 +112,43 @@ export interface AudioFrameEvent {
 
 /** 与 Rust 端 `prefs::Settings` 对应：主界面与悬浮球共用的界面偏好。 */
 export interface Settings {
-  /** `light` / `dark` / `system`，同时作用于主界面与悬浮球。 */
+  /** `light` / `dark` / `system`，只作用于主界面；悬浮球不吃明暗，固定用浅色那份。 */
   themeMode: ThemeMode;
   appTheme: string;
-  ballTheme: string;
-  /** 悬浮球「律动样式」id（见 `ball-style.ts` 的 `BALL_STYLES`）：决定小球长什么样。 */
-  ballStyle: string;
-  /** 小球跟着哪种数据律动：`spectrum`（频谱）/ `wave`（波形）/ `adaptive`（自适应）。 */
-  ballSource: BallDataSource;
   language: Language;
   autoFollow: boolean;
   recordWav: boolean;
+
+  /** 用户自定义色槽（有序）。空数组 = 还没配过，界面会按 `ballTheme` 或默认色补一份。 */
+  ballColors: string[];
+  /** 内圈样式 id（见 `ball-style.ts` 的 `BALL_INNER_STYLES`）。空 = 还没配过。 */
+  ballInnerStyle: string;
+  /** 外圈样式 id（见 `BALL_OUTER_STYLES`）。空 = 还没配过。 */
+  ballOuterStyle: string;
+  /** 内圈数据源。空 = 用样式的默认值。 */
+  ballInnerSource: string;
+  /** 外圈数据源。空 = 用样式的默认值。 */
+  ballOuterSource: string;
+  /** 悬浮球尺寸倍率（0~3，1 = 基准大小）。 */
+  ballSize: number;
+  /** 收到数据后的显示倍率（0~5，1 = 原始幅度）。 */
+  ballGain: number;
+  /** 是否让小球随音频律动缩放。 */
+  ballPulse: boolean;
+  /** 缩放算法 id（见 `ball-pulse.ts`）。 */
+  ballPulseAlgorithm: string;
+  /** 律动缩放的幅度倍率（1~3，1 = 算法原本的幅度）。 */
+  ballPulseAmount: number;
+  /** 悬浮球中心在屏幕里的位置（0~1 百分比），拖动后记住。 */
+  ballPosX: number;
+  ballPosY: number;
+
+  /** 旧版「悬浮球配色」id：只在 `ballColors` 为空时拿来当初始色。 */
+  ballTheme: string;
+  /** 旧版单一「律动样式」id，迁移时当作外圈样式。 */
+  ballStyle: string;
+  /** 旧版单一数据源，迁移时当作外圈数据源。空串 = 没配过。 */
+  ballSource: string;
 }
 
 export const EVT_AUDIO = "pac://audio-frame";
@@ -139,6 +164,21 @@ export const EVT_BALL_HOVER = "pac://ball-hover";
 /** `pac://ball-hover` 事件的负载。 */
 export interface BallHover {
   hovered: boolean;
+}
+
+/**
+ * 悬浮球的可交互区域，坐标是**窗口逻辑像素**。
+ *
+ * 球窗口铺满整个屏幕，收起时整窗鼠标穿透，只有这块区域要留着接收鼠标 ——
+ * 形状由前端算（球的大小可变、面板还要躲着屏幕边），后端的轮询线程照着比一下就行。
+ */
+export interface BallGeometry {
+  /** 球心与半径。 */
+  orbX: number;
+  orbY: number;
+  orbR: number;
+  /** 面板矩形 `[left, top, right, bottom]`；没展开时传 null。 */
+  panel: [number, number, number, number] | null;
 }
 
 export const WAVE_BUCKETS = 256;
@@ -159,6 +199,8 @@ export const api = {
   stopCapture: () => invoke<StopReport | null>("stop_capture"),
   setAutoFollow: (enabled: boolean) => invoke<boolean>("set_auto_follow", { enabled }),
   setBallVisible: (visible: boolean) => invoke<void>("set_ball_visible", { visible }),
+  setBallGeometry: (geometry: BallGeometry) => invoke<void>("set_ball_geometry", { ...geometry }),
+  setBallDragging: (dragging: boolean) => invoke<void>("set_ball_dragging", { dragging }),
   showMainWindow: () => invoke<void>("show_main_window"),
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) => invoke<Settings>("save_settings", { settings }),

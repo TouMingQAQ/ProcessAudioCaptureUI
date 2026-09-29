@@ -39,37 +39,57 @@ body.ball-body {
 
 .orb {
   position: absolute;
-  /* 相对窗口右下角的偏移必须固定，展开时窗口向左上生长，
-     小球才能停在屏幕上的同一位置 */
-  right: 24px;
-  bottom: 24px;
-  width: 96px;
-  height: 96px;
+  /* 球心按百分比摆在窗口里（`--orb-cx` / `--orb-cy` 由 `ball.ts` 写，拖动时实时改），
+     再按自身尺寸往回挪半个 —— 于是球变大变小、屏幕换分辨率，圆心都不动。
+     窗口铺满整屏，所以这个百分比就是"球在屏幕上的位置"。 */
+  left: var(--orb-cx, 92%);
+  top: var(--orb-cy, 88%);
+  width: var(--orb-size, 96px);
+  height: var(--orb-size, 96px);
   padding: 0;
   border: 0;
   border-radius: 50%;
   background: transparent;
   cursor: grab;
+  transform: translate(-50%, -50%);
   transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1), filter 0.22s ease;
   filter: drop-shadow(0 8px 18px var(--ui-orb-shadow));
 }
 
 .orb:hover {
-  transform: scale(1.06);
+  transform: translate(-50%, -50%) scale(1.06);
 }
 
 .orb:active {
   cursor: grabbing;
-  transform: scale(0.97);
+  transform: translate(-50%, -50%) scale(0.97);
+}
+
+/* 拖动中不要放大缩小，不然球会比指针跑得快 */
+.stage.is-dragging .orb {
+  transform: translate(-50%, -50%);
+  transition: none;
 }
 
 .orb canvas {
   position: absolute;
   inset: 0;
-  width: 96px;
-  height: 96px;
+  /* 真实像素由 `renderOrb` 写进 inline style，这里只是兜底 */
+  width: 100%;
+  height: 100%;
   border-radius: 50%;
   display: block;
+}
+
+/*
+ * 随音频律动缩放：**整颗球一起**胀缩，外发光也算在内。
+ *
+ * `--orb-pulse` 由 `orb.ts` 每帧写。缩放挂在画布与音符上、而不是按钮本体上：按钮
+ * 身上还挂着鼠标悬停那点补间的放大，两者叠在一起的话，律动会被过渡平滑掉。
+ */
+.orb canvas,
+.orb-glyph {
+  transform: scale(var(--orb-pulse, 1));
 }
 
 .orb-glyph {
@@ -77,7 +97,7 @@ body.ball-body {
   inset: 0;
   display: grid;
   place-items: center;
-  font-size: 22px;
+  font-size: calc(var(--orb-size, 96px) * 0.23);
   color: var(--ui-orb-glyph);
   pointer-events: none;
   opacity: 0.85;
@@ -95,15 +115,16 @@ body.ball-body {
  * 形状全在画布上（`ball-render.ts`），CSS 这边只处理少数跟样式有关的细节。
  */
 
-/* 涟漪 / 激光这两种没有"球体"，待机音符会跟光晕打架，索性收掉 */
-html[data-ball-style="ripple"] .orb-glyph,
-html[data-ball-style="laser"] .orb-glyph {
+/* 内圈没画"球体"的样式（涟漪 / 无），待机音符会跟光晕打架，索性收掉 */
+html[data-ball-inner="ripple"] .orb-glyph,
+html[data-ball-inner="none"] .orb-glyph {
   opacity: 0.28;
 }
 
-/* 示波与粒子在待机时也在动，光标提示改一下，别让人以为卡住了 */
-html[data-ball-style="wave"] .orb,
-html[data-ball-style="ripple"] .orb {
+/* 待机时也在动的样式，交互过渡放慢一点，别让人以为卡住了 */
+html[data-ball-inner="particles"] .orb,
+html[data-ball-inner="ripple"] .orb,
+html[data-ball-outer="wave"] .orb {
   transition-duration: 0.3s;
 }
 
@@ -111,15 +132,21 @@ html[data-ball-style="ripple"] .orb {
 
 .panel {
   position: absolute;
-  right: 24px;
-  /* 24（小球下边距）+ 96（小球直径）+ 12（间隙） */
-  bottom: 132px;
+  /* left / top 由 `ball.ts` 算：贴着球放，还要躲着屏幕四边（球在左上角时面板就往
+     右下走，反之亦然）。CSS 这边只管它多大、怎么浮现。 */
+  left: 0;
+  top: 0;
   width: 300px;
   opacity: 0;
   transform: translateY(10px) scale(0.96);
-  transform-origin: 100% 100%;
+  transform-origin: 50% 50%;
   pointer-events: none;
   transition: opacity 0.2s ease, transform 0.26s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+/* 拖动时把面板收掉：它跟在球旁边飘来飘去只会碍事 */
+.stage.is-dragging .panel {
+  opacity: 0;
 }
 
 .stage.is-expanded .panel {
@@ -138,20 +165,8 @@ html[data-ball-style="ripple"] .orb {
   backdrop-filter: blur(10px);
 }
 
-/* 面板下方的小尾巴，指向小球 */
-.panel-inner::after {
-  content: "";
-  position: absolute;
-  right: 48px;
-  bottom: -9px;
-  width: 16px;
-  height: 16px;
-  background: var(--ui-surface);
-  border-right: 2px solid var(--ui-card-border);
-  border-bottom: 2px solid var(--ui-card-border);
-  transform: rotate(45deg);
-  border-radius: 0 0 4px 0;
-}
+/* 面板的小尾巴去掉了：面板现在可能出现在球的任意一侧，一个小三角要照顾四个方向
+   加上球径变化，收益不抵复杂度 —— 它本来就紧贴球旁边，联系已经够清楚。 */
 
 .panel-head {
   display: flex;

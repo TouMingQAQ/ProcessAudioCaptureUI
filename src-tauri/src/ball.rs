@@ -1,50 +1,79 @@
 //! 悬浮球的悬停检测。
 //!
-//! 小球窗口的尺寸与位置是**恒定**的：展开只是把面板显示出来，窗口本身不缩放也不
-//! 移动。这是为了绕开 WebView 的一个行为 —— 它的布局视口就是窗口客户区，窗口一
-//! resize，视口会**晚一帧**才跟上，那一帧里内容仍按旧视口排版、却已经画在新窗口的
-//! 左上角；表现出来就是「鼠标一碰小球，小球先闪到窗口左上角再弹回来」。
-//! 尺寸和位置全程不变，这一帧就不存在，也不需要任何"藏一帧"之类的遮掩。
+//! 球窗口现在是**铺满整个屏幕**的一层透明窗口，小球本身由前端按百分比摆在里面。
+//! 这么做是为了让球能停在屏幕的任何地方 —— 窗口只有一小块时球锚在窗口角上，窗口又被
+//! 限制在屏幕内，球就永远够不到屏幕上沿。
 //!
-//! 代价是：收起时窗口比小球大得多，那片透明区域会挡住底下的东西。所以收起状态下
-//! 整窗设为**鼠标穿透**，悬停改由这里轮询光标位置判断 —— 光标一进入小球（或展开后
-//! 的面板）就把窗口恢复成可交互。
+//! 代价是这层窗口会盖住整个桌面，所以收起状态下整窗设为**鼠标穿透**，悬停改由这里轮询
+//! 光标位置判断：光标一进入小球（或展开后的面板）就把窗口恢复成可交互。
+//!
+//! 可交互区域的形状由前端上报（见 [`BallHit`]）—— 球多大、面板落在哪一边，只有前端
+//! 知道；这里的轮询只要拿它跟光标位置比一下就行。
+//!
+//! 拖动期间窗口**固定保持可交互**：那时前端正收着 pointer 事件，一旦切成穿透，拖动就断了。
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
+use crate::AppState;
+
 /// 悬停状态变化事件，发给悬浮球窗口。
 pub const BALL_HOVER_EVENT: &str = "pac://ball-hover";
-
-/// 小球相对窗口**右下角**的偏移与尺寸（逻辑像素），与 `ball.css` 里的 `.orb` 一致。
-const ORB_INSET: f64 = 24.0;
-const ORB_SIZE: f64 = 96.0;
-
-/// 面板区域（逻辑像素），与 `ball.css` 里的 `.panel` 一致。
-/// 高度取上界即可 —— 能把真实面板整个盖住就行，多出来的部分是透明区。
-const PANEL_INSET: f64 = 24.0;
-const PANEL_BOTTOM: f64 = 132.0;
-const PANEL_WIDTH: f64 = 300.0;
-const PANEL_MAX_HEIGHT: f64 = 320.0;
 
 /// 光标轮询间隔：一次 `GetCursorPos` 而已，25ms 既跟手又几乎不耗电。
 const POLL_INTERVAL: Duration = Duration::from_millis(25);
 /// 光标离开后的宽限期：从小球挪到面板要跨过一条缝隙，立刻收起会闪。
 const LEAVE_GRACE: Duration = Duration::from_millis(260);
 
-#[derive(Clone, Copy)]
-struct Rect {
-    left: f64,
-    top: f64,
-    right: f64,
-    bottom: f64,
+/// 前端上报的可交互区域，坐标是**窗口逻辑像素**（即 CSS 像素）。
+///
+/// 默认值全零（半径为 0），也就是"什么都点不到"—— 前端还没上报时窗口保持穿透，
+/// 正好是启动时要的状态。
+#[derive(Clone, Copy, Default)]
+pub struct BallHit {
+    /// 球心与半径。
+    pub orb_x: f64,
+    pub orb_y: f64,
+    pub orb_r: f64,
+    /// 面板矩形 `[left, top, right, bottom]`；没展开时是 `None`。
+    pub panel: Option<[f64; 4]>,
 }
 
-impl Rect {
-    fn contains(self, x: f64, y: f64) -> bool {
-        x >= self.left && x < self.right && y >= self.top && y < self.bottom
+/// 悬浮球的交互状态：命中区域 + 是否正在拖动。
+#[derive(Default)]
+pub struct BallInteraction {
+    hit: Mutex<BallHit>,
+    dragging: AtomicBool,
+}
+
+impl BallInteraction {
+    /// 记下新的可交互区域。
+    ///
+    /// 返回"这是不是第一次拿到有效区域" —— 调用方拿它打一行启动日志，好把
+    /// "前端没上报"和"上报了但命中判定不对"这两种毛病分开。
+    pub fn set_hit(&self, hit: BallHit) -> bool {
+        let Ok(mut slot) = self.hit.lock() else {
+            return false;
+        };
+        let first = slot.orb_r <= 0.0 && hit.orb_r > 0.0;
+        *slot = hit;
+        first
+    }
+
+    pub fn set_dragging(&self, dragging: bool) {
+        self.dragging.store(dragging, Ordering::Relaxed);
+    }
+
+    fn hit(&self) -> BallHit {
+        self.hit.lock().map(|slot| *slot).unwrap_or_default()
+    }
+
+    fn is_dragging(&self) -> bool {
+        self.dragging.load(Ordering::Relaxed)
     }
 }
 
@@ -71,6 +100,11 @@ fn run(app: AppHandle) {
         let Some(window) = app.get_webview_window("ball") else {
             continue;
         };
+        // `BallInteraction` 是 `AppState` 的字段，不是单独注册的托管状态；
+        // 取不到就跳过这一轮，别让线程 panic —— 那会让窗口一直卡在穿透上。
+        let Some(state) = app.try_state::<AppState>() else {
+            continue;
+        };
 
         // 隐藏时状态清零，下次显示从收起开始
         if !window.is_visible().unwrap_or(false) {
@@ -81,7 +115,16 @@ fn run(app: AppHandle) {
             continue;
         }
 
-        if cursor_inside(&app, &window, expanded) {
+        // 拖动中固定保持可交互，不去看光标在不在球上
+        if state.ball.is_dragging() {
+            inside_since = Some(Instant::now());
+            if !expanded {
+                set_state(&app, &window, &mut expanded, true);
+            }
+            continue;
+        }
+
+        if cursor_inside(&app, &window, &state.ball, expanded) {
             inside_since = Some(Instant::now());
             if !expanded {
                 set_state(&app, &window, &mut expanded, true);
@@ -101,26 +144,30 @@ fn set_state(app: &AppHandle, window: &WebviewWindow, expanded: &mut bool, hover
 }
 
 /// 光标是否落在小球（或展开后的面板）上。
-fn cursor_inside(app: &AppHandle, window: &WebviewWindow, expanded: bool) -> bool {
-    let (Ok(cursor), Ok(position), Ok(size)) = (
-        app.cursor_position(),
-        window.outer_position(),
-        window.outer_size(),
-    ) else {
+///
+/// 光标与窗口位置都是**物理**像素，而上报的命中区域是逻辑像素，所以先把光标换算到
+/// 窗口坐标系里再比。
+fn cursor_inside(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    interaction: &BallInteraction,
+    expanded: bool,
+) -> bool {
+    let hit = interaction.hit();
+    if hit.orb_r <= 0.0 {
+        return false;
+    }
+
+    let (Ok(cursor), Ok(position)) = (app.cursor_position(), window.outer_position()) else {
         return false;
     };
-
     let scale = window.scale_factor().unwrap_or(1.0);
-    let right = position.x as f64 + size.width as f64;
-    let bottom = position.y as f64 + size.height as f64;
+    let x = (cursor.x - position.x as f64) / scale;
+    let y = (cursor.y - position.y as f64) / scale;
 
-    let orb = Rect {
-        left: right - (ORB_INSET + ORB_SIZE) * scale,
-        top: bottom - (ORB_INSET + ORB_SIZE) * scale,
-        right: right - ORB_INSET * scale,
-        bottom: bottom - ORB_INSET * scale,
-    };
-    if orb.contains(cursor.x, cursor.y) {
+    let dx = x - hit.orb_x;
+    let dy = y - hit.orb_y;
+    if dx * dx + dy * dy <= hit.orb_r * hit.orb_r {
         return true;
     }
 
@@ -128,11 +175,6 @@ fn cursor_inside(app: &AppHandle, window: &WebviewWindow, expanded: bool) -> boo
         return false;
     }
 
-    let panel = Rect {
-        left: right - (PANEL_INSET + PANEL_WIDTH) * scale,
-        top: bottom - (PANEL_BOTTOM + PANEL_MAX_HEIGHT) * scale,
-        right: right - PANEL_INSET * scale,
-        bottom: bottom - PANEL_BOTTOM * scale,
-    };
-    panel.contains(cursor.x, cursor.y)
+    hit.panel
+        .is_some_and(|[left, top, right, bottom]| x >= left && x < right && y >= top && y < bottom)
 }

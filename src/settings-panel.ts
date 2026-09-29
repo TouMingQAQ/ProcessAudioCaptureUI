@@ -4,40 +4,49 @@
  * 四个 tab：
  * * 通用 —— 语言、自动跟随、默认录制；
  * * 主题 —— 深色模式 + 应用主题；
- * * 悬浮球 —— 配色 + 律动样式 + 律动数据；
+ * * 悬浮球 —— 配色（自定义色槽 + 快捷预设）、律动样式（内圈 / 外圈各一个）、
+ *   尺寸与律动（大小、显示倍率、随音频缩放）；
  * * 内核 —— 采集内核的加载状态与重新加载（原来挂在顶栏上，现在挪进来）。
  *
- * 主题卡片是真正"所见即所得"的：卡片里的浅色 / 深色两半各自带上那套主题的 CSS
- * 变量，里头的迷你界面用的全是和真实界面同一批 `var(--ui-*)`，所以预览长什么样、
- * 套上去就是什么样。
+ * 应用主题卡片是真正"所见即所得"的：卡片里的浅色 / 深色两半各自带上那套主题的 CSS
+ * 变量，里头的迷你界面用的全是和真实界面同一批 `var(--ui-*)`。
  *
- * 悬浮球这边分成两件事，设置里也是两块：
- * * **配色**（悬浮球主题）—— 只换颜色，卡片用 DOM 拼一个迷你小球；
- * * **律动样式** —— 决定小球长什么样、跟着频谱还是波形动，卡片里是一块真画布，
- *   跑的是悬浮球窗口那一份绘制代码（`renderOrb`），所以预览就是实物的样子。
+ * 悬浮球这边有三块可以折叠：
+ * * **配色** —— 用户自己排的一张色槽表（至少一个色），样式按顺序往下取；
+ * * **律动样式** —— 内外两层各一个真画布卡片，跑的就是悬浮球窗口那份绘制代码
+ *   （`renderOrb`），卡片上看到的就是换上去以后的样子；
+ * * **尺寸与律动** —— 大小、显示倍率，以及"跟着音乐点头"的算法。
  *
  * 样式名字与说明都按 id 去 `i18n.ts` 取（`ballStyle.<id>`），样式表里不再各写一份中英文。
  */
 
 import type { DllStatus, Settings } from "./api";
-import { bandsForFrame, type BallDataSource, type BallStyle } from "./ball-style";
-import { colorsFromPalette, renderOrb, type BallFrame, type OrbColors } from "./ball-render";
+import type { BallDataSource, BallStyle } from "./ball-style";
+import { renderStylePreview } from "./ball-render";
+import {
+  BALL_PULSE_ALGORITHMS,
+  DEFAULT_BALL_PULSE_ALGORITHM,
+  DEFAULT_BALL_PULSE_AMOUNT,
+} from "./ball-pulse";
 import { bi, t } from "./i18n";
 import type { SettingsBinding } from "./settings";
 import {
   APP_THEMES,
-  BALL_STYLES,
-  BALL_THEMES,
+  BALL_COLOR_PRESETS,
+  BALL_DATA_SOURCES,
+  BALL_INNER_STYLES,
+  BALL_OUTER_STYLES,
   DEFAULT_APP_THEME,
-  DEFAULT_BALL_DATA_SOURCE,
-  DEFAULT_BALL_STYLE,
-  DEFAULT_BALL_THEME,
+  DEFAULT_BALL_COLOR,
+  DEFAULT_BALL_INNER_STYLE,
+  DEFAULT_BALL_OUTER_STYLE,
+  MAX_BALL_COLORS,
   applyVars,
-  ballThemeById,
+  ballStyleById,
+  orbColorsFrom,
   paletteStyle,
-  resolveDataSource,
   type Appearance,
-  type OrbPalette,
+  type OrbColors,
   type Palette,
 } from "./theme";
 
@@ -50,7 +59,10 @@ const $ = <T extends HTMLElement>(id: string): T => {
 /** 小球预览的画布边长（CSS 像素），和 `.style-card-orb` 的尺寸保持一致。 */
 const PREVIEW_SIZE = 56;
 
-/** 迷你界面骨架：一条侧栏 + 一个内容块 + 几根"频谱柱"。 */
+/** 十六进制色（`#rgb` / `#rrggbb`）。 */
+const HEX = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
+
+/** 迷你界面骨架：一条侧栏 + 一个内容块 + 几根"频谱柱"（应用主题卡片预览用）。 */
 function mockApp(): HTMLElement {
   const wrap = document.createElement("div");
   wrap.className = "mock";
@@ -76,35 +88,13 @@ function mockApp(): HTMLElement {
   return wrap;
 }
 
-/** 迷你小球：一圈环 + 中心球（只用来预览配色，形状差异在样式卡片里看）。 */
-function mockOrb(): HTMLElement {
-  const wrap = document.createElement("div");
-  wrap.className = "mock-orb";
-  const halo = document.createElement("span");
-  halo.className = "mock-orb-halo";
-  const ring = document.createElement("span");
-  ring.className = "mock-orb-ring";
-  const core = document.createElement("span");
-  core.className = "mock-orb-core";
-  wrap.append(halo, ring, core);
-  return wrap;
-}
-
 interface Preview {
   appearance: Appearance;
   palette: Palette;
-  /** 悬浮球主题才有：小球配色。 */
-  orb?: OrbPalette;
 }
 
-/** 一张主题卡片：左右分别是浅色 / 深色预览。 */
-function themeCard(
-  id: string,
-  name: string,
-  appearances: Preview[],
-  selected: boolean,
-  withOrb: boolean,
-): HTMLButtonElement {
+/** 应用主题卡片：左右分别是浅色 / 深色预览。 */
+function themeCard(id: string, name: string, appearances: Preview[], selected: boolean): HTMLButtonElement {
   const card = document.createElement("button");
   card.type = "button";
   card.className = "theme-card";
@@ -118,11 +108,17 @@ function themeCard(
     const half = document.createElement("div");
     half.className = "theme-half";
     half.dataset.appearance = item.appearance;
-    applyVars(half, paletteStyle(item.palette, item.orb));
-    half.append(withOrb ? mockOrb() : mockApp());
+    applyVars(half, paletteStyle(item.palette));
+    half.append(mockApp());
     shot.append(half);
   }
 
+  card.append(shot, metaRow(name, selected));
+  return card;
+}
+
+/** 卡片底部那行：名字 +（选中时）「当前」标签。 */
+function metaRow(name: string, selected: boolean): HTMLElement {
   const meta = document.createElement("div");
   meta.className = "theme-meta";
   const label = document.createElement("span");
@@ -135,62 +131,80 @@ function themeCard(
     tag.textContent = t("settings.theme.current");
     meta.append(tag);
   }
+  return meta;
+}
 
-  card.append(shot, meta);
+/* ------------------------------------------------------------- 配色预设 */
+
+/** 一张快捷预设：三条颜色 + 名字。点一下把这三色铺进色槽。 */
+function presetCard(preset: (typeof BALL_COLOR_PRESETS)[number], current: string[]): HTMLButtonElement {
+  const name = bi(preset.name);
+  const card = document.createElement("button");
+  card.type = "button";
+  card.className = "preset-card";
+  card.title = name;
+  card.setAttribute("aria-pressed", String(preset.colors.join(" ") === current.join(" ")));
+
+  const band = document.createElement("span");
+  band.className = "preset-band";
+  for (const color of preset.colors) {
+    const chip = document.createElement("i");
+    chip.style.background = color;
+    band.append(chip);
+  }
+
+  const label = document.createElement("span");
+  label.className = "preset-name";
+  label.textContent = name;
+
+  card.append(band, label);
   return card;
 }
 
 /* --------------------------------------------------------------- 样式卡片 */
 
-/** 样式卡片里那块画布要用的固定假数据：同一份数据每次都画出同一张图，不会闪。 */
-function previewFrame(style: BallStyle): BallFrame {
-  const count = 48;
-  const spectrum: number[] = [];
-  const wave: number[] = [];
-  for (let i = 0; i < count; i++) {
-    const x = i / (count - 1);
-    // 频谱：低音厚、往高音衰减，带一点起伏
-    spectrum.push(Math.min(1, (0.9 - x * 0.5) * (0.7 + 0.3 * Math.sin(i * 0.7))));
-    // 波形包络：中间一个明显的峰，两边收敛
-    wave.push(Math.min(1, Math.abs(Math.sin(x * Math.PI * 2.4)) * (0.35 + 0.65 * Math.sin(x * Math.PI))));
-  }
-  const { bands, useWave, level } = bandsForFrame({ spectrum, wave }, style.mode, count);
-  return { bands, useWave, level, peak: 0, live: true, time: 0 };
-}
-
-/** 数据源的名字（频谱 / 波形 / 自适应）。 */
+/** 数据源的名字（频谱 / 波形 / 自适应 / 响度 / 峰值）。 */
 function sourceName(source: BallDataSource): string {
   return t(`ballStyle.source.${source}`);
 }
 
-/**
- * 样式名字与说明都放在 `i18n.ts` 里（键名 `ballStyle.<id>` / `ballStyle.hint.<id>`），
- * 不跟着 `BALL_STYLES` 一起维护两份，避免"改了一处忘了另一处"。
- */
+/** 样式名字与说明都放在 `i18n.ts`（键名 `ballStyle.<id>` / `ballStyle.hint.<id>`）。 */
 function styleName(style: BallStyle): string {
   return t(`ballStyle.${style.id}`);
 }
 
 /**
- * 一张律动样式卡片：上面是真画布预览，下面是名字与数据来源。
+ * 一张律动样式卡片。
  *
- * 画布尺寸要等 `getBoundingClientRect` 有值，所以卡片插进 DOM 之后再画
- * （见 `paintStylePreviews`）。
+ * 预览画的是"换成它以后整颗球的样子"：只替换这一层的样式，另一层保留当前选择，
+ * 所以内圈卡片里也有外圈、外圈卡片里也有内圈，看到的就是实物的样子。
  */
-function styleCard(style: BallStyle, selected: boolean): HTMLButtonElement {
+function styleCard(style: BallStyle, inner: BallStyle, outer: BallStyle, selected: boolean): HTMLButtonElement {
   const card = document.createElement("button");
   card.type = "button";
   card.className = "style-card";
   card.dataset.styleId = style.id;
+  card.dataset.layer = style.layer;
   card.setAttribute("aria-pressed", String(selected));
   card.title = t(`ballStyle.hint.${style.id}`);
+
+  const previewInner = style.layer === "inner" ? style : inner;
+  const previewOuter = style.layer === "outer" ? style : outer;
 
   const shot = document.createElement("span");
   shot.className = "style-card-shot";
   const canvas = document.createElement("canvas");
   canvas.className = "style-card-orb";
-  canvas.dataset.orbPreview = style.id;
+  canvas.dataset.orbInner = previewInner.id;
+  canvas.dataset.orbOuter = previewOuter.id;
   shot.append(canvas);
+
+  if (selected) {
+    const tag = document.createElement("span");
+    tag.className = "style-card-tag";
+    tag.textContent = t("settings.theme.current");
+    shot.append(tag);
+  }
 
   const meta = document.createElement("span");
   meta.className = "style-card-meta";
@@ -202,23 +216,17 @@ function styleCard(style: BallStyle, selected: boolean): HTMLButtonElement {
   origin.textContent = sourceName(style.mode);
   meta.append(label, origin);
 
-  if (selected) {
-    const tag = document.createElement("span");
-    tag.className = "style-card-tag";
-    tag.textContent = t("settings.theme.current");
-    shot.append(tag);
-  }
-
   card.append(shot, meta);
   return card;
 }
 
-/** 把样式卡片里的画布逐个画出来（此时它们已经在 DOM 里，量得到尺寸）。 */
+/** 把样式卡片里的画布逐个画出来（此时它们已经在 DOM 里）。 */
 function paintStylePreviews(root: HTMLElement, colors: OrbColors) {
-  root.querySelectorAll<HTMLCanvasElement>("canvas[data-orb-preview]").forEach((canvas) => {
-    const style = BALL_STYLES.find((item) => item.id === canvas.dataset.orbPreview);
-    if (!style) return;
-    renderOrb(canvas, style, colors, previewFrame(style), PREVIEW_SIZE, window.devicePixelRatio || 1);
+  const dpr = window.devicePixelRatio || 1;
+  root.querySelectorAll<HTMLCanvasElement>("canvas[data-orb-inner]").forEach((canvas) => {
+    const inner = ballStyleById(canvas.dataset.orbInner ?? "", "inner");
+    const outer = ballStyleById(canvas.dataset.orbOuter ?? "", "outer");
+    renderStylePreview(canvas, inner, outer, colors, PREVIEW_SIZE, dpr);
   });
 }
 
@@ -254,14 +262,29 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
   const autoFollowBox = $<HTMLInputElement>("set-auto-follow");
   const recordWavBox = $<HTMLInputElement>("set-record-wav");
   const appGrid = $<HTMLDivElement>("app-theme-grid");
-  const ballGrid = $<HTMLDivElement>("ball-theme-grid");
-  const styleGrid = $<HTMLDivElement>("ball-style-grid");
-  const sourceRow = $<HTMLDivElement>("ball-source-row");
-  const sourceGroup = $<HTMLDivElement>("ball-source-group");
-  const sourceNote = $<HTMLParagraphElement>("ball-source-note");
   const resetBtn = $<HTMLButtonElement>("theme-reset");
-  const ballResetBtn = $<HTMLButtonElement>("ball-reset");
   const reloadBtn = $<HTMLButtonElement>("btn-kernel-reload");
+
+  /* ------------------------------------------------------------ 悬浮球控件 */
+  const colorSlots = $<HTMLDivElement>("ball-color-slots");
+  const colorAddBtn = $<HTMLButtonElement>("ball-color-add");
+  const colorPresets = $<HTMLDivElement>("ball-color-presets");
+  const ballResetBtn = $<HTMLButtonElement>("ball-reset");
+  const innerGrid = $<HTMLDivElement>("ball-inner-grid");
+  const outerGrid = $<HTMLDivElement>("ball-outer-grid");
+  const innerSourceGroup = $<HTMLDivElement>("ball-inner-source");
+  const outerSourceGroup = $<HTMLDivElement>("ball-outer-source");
+  const innerNote = $<HTMLParagraphElement>("ball-inner-note");
+  const outerNote = $<HTMLParagraphElement>("ball-outer-note");
+  const sizeInput = $<HTMLInputElement>("ball-size");
+  const sizeValue = $<HTMLSpanElement>("ball-size-value");
+  const gainInput = $<HTMLInputElement>("ball-gain");
+  const gainValue = $<HTMLSpanElement>("ball-gain-value");
+  const pulseAmountInput = $<HTMLInputElement>("ball-pulse-amount");
+  const pulseAmountValue = $<HTMLSpanElement>("ball-pulse-amount-value");
+  const pulseBox = $<HTMLInputElement>("ball-pulse");
+  const pulseGroup = $<HTMLDivElement>("ball-pulse-group");
+  const pulseNote = $<HTMLParagraphElement>("ball-pulse-note");
 
   const knStatus = $<HTMLDivElement>("kn-status");
   const knStatusDot = $<HTMLSpanElement>("kn-status-dot");
@@ -274,7 +297,19 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
   let settings: Settings = prefs.get();
   let opened = false;
 
-  /* ------------------------------------------------------------ 主题网格 */
+  /* ---------------------------------------------------------- 折叠区块 */
+
+  overlay.querySelectorAll<HTMLElement>(".set-block.is-collapsible").forEach((block) => {
+    const head = block.querySelector<HTMLButtonElement>(".set-block-head.is-collapsible");
+    if (!head) return;
+    head.addEventListener("click", () => {
+      const collapsed = block.dataset.collapsed !== "true";
+      block.dataset.collapsed = String(collapsed);
+      head.setAttribute("aria-expanded", String(!collapsed));
+    });
+  });
+
+  /* ------------------------------------------------------------ 应用主题 */
 
   function renderAppGrid() {
     const frag = document.createDocumentFragment();
@@ -288,78 +323,163 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
             { appearance: "dark", palette: theme.dark },
           ],
           theme.id === settings.appTheme,
-          false,
         ),
       );
     }
     appGrid.replaceChildren(frag);
   }
 
-  function renderBallGrid() {
+  /* ------------------------------------------------------------ 悬浮球配色 */
+
+  function patchColors(next: string[]) {
+    void prefs.patch({ ballColors: next });
+  }
+
+  function setSlot(index: number, color: string) {
+    const next = [...settings.ballColors];
+    next[index] = color;
+    patchColors(next);
+  }
+
+  /** 色槽表：一行一个颜色（取色器 + 手填十六进制 + 删除）。 */
+  function renderColorSlots() {
+    const colors = settings.ballColors;
     const frag = document.createDocumentFragment();
-    for (const theme of BALL_THEMES) {
-      frag.append(
-        themeCard(
-          theme.id,
-          bi(theme.name),
-          [
-            { appearance: "light", palette: theme.light.panel, orb: theme.light.orb },
-            { appearance: "dark", palette: theme.dark.panel, orb: theme.dark.orb },
-          ],
-          theme.id === settings.ballTheme,
-          true,
-        ),
-      );
-    }
-    ballGrid.replaceChildren(frag);
-  }
 
-  /**
-   * 律动样式网格：卡片里的画布用的是**当前悬浮球主题**的配色与真实绘制代码，
-   * 所以在这里点样式之前就能看到"换成它长什么样"。
-   */
-  function renderStyleGrid() {
-    const colors = colorsFromPalette(currentOrbPalette());
-    const frag = document.createDocumentFragment();
-    for (const style of BALL_STYLES) {
-      frag.append(styleCard(style, style.id === settings.ballStyle));
-    }
-    styleGrid.replaceChildren(frag);
-    paintStylePreviews(styleGrid, colors);
-  }
+    colors.forEach((color, index) => {
+      const row = document.createElement("div");
+      row.className = "color-slot";
 
-  function currentOrbPalette(): OrbPalette {
-    const appearance: Appearance =
-      document.documentElement.dataset.appearance === "dark" ? "dark" : "light";
-    return ballThemeById(settings.ballTheme)[appearance].orb;
-  }
+      const swatch = document.createElement("input");
+      swatch.type = "color";
+      swatch.className = "slot-swatch";
+      swatch.value = color;
+      swatch.addEventListener("input", () => setSlot(index, swatch.value));
 
-  /**
-   * 数据源那一排。
-   *
-   * 样式只认一种数据时（例如「柱阵」天生是一排频谱柱）整排收起来 —— 摆一排点不动的
-   * 按钮不如不摆，改成一句话说清楚它跟的是什么。
-   */
-  function renderSourceRow() {
-    const style = BALL_STYLES.find((item) => item.id === settings.ballStyle) ?? BALL_STYLES[0];
-    const choice = style.spectrum && style.wave;
-
-    sourceRow.hidden = !choice;
-    sourceNote.hidden = false;
-    if (!choice) {
-      sourceNote.textContent = t("settings.theme.ballSource.fixed", {
-        style: styleName(style),
-        source: sourceName(style.mode),
+      const text = document.createElement("input");
+      text.type = "text";
+      text.className = "slot-text";
+      text.value = color;
+      text.spellcheck = false;
+      text.addEventListener("change", () => {
+        if (HEX.test(text.value.trim())) setSlot(index, text.value.trim().toLowerCase());
+        // 打错了就退回原值，不把半截输入写进设置
+        else text.value = color;
       });
-      return;
-    }
 
-    sourceNote.textContent = t(`settings.theme.ballSource.hint.${settings.ballSource}`);
-    sourceGroup.querySelectorAll<HTMLButtonElement>(".seg").forEach((btn) => {
-      const active = btn.dataset.source === settings.ballSource;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "slot-remove";
+      remove.textContent = "×";
+      remove.title = t("settings.ball.slotRemove");
+      remove.disabled = colors.length <= 1;
+      remove.addEventListener("click", () => {
+        const next = colors.filter((_, i) => i !== index);
+        if (next.length > 0) patchColors(next);
+      });
+
+      row.append(swatch, text, remove);
+      frag.append(row);
+    });
+
+    colorSlots.replaceChildren(frag);
+    colorAddBtn.disabled = colors.length >= MAX_BALL_COLORS;
+  }
+
+  function renderPresets() {
+    const frag = document.createDocumentFragment();
+    for (const preset of BALL_COLOR_PRESETS) {
+      frag.append(presetCard(preset, settings.ballColors));
+    }
+    colorPresets.replaceChildren(frag);
+  }
+
+  /* ------------------------------------------------------------ 悬浮球样式 */
+
+  function renderStyleGrids() {
+    const inner = ballStyleById(settings.ballInnerStyle, "inner");
+    const outer = ballStyleById(settings.ballOuterStyle, "outer");
+
+    const innerFrag = document.createDocumentFragment();
+    for (const style of BALL_INNER_STYLES) {
+      innerFrag.append(styleCard(style, inner, outer, style.id === inner.id));
+    }
+    innerGrid.replaceChildren(innerFrag);
+
+    const outerFrag = document.createDocumentFragment();
+    for (const style of BALL_OUTER_STYLES) {
+      outerFrag.append(styleCard(style, inner, outer, style.id === outer.id));
+    }
+    outerGrid.replaceChildren(outerFrag);
+
+    // 卡片插进 DOM 之后再画：此时画布拿得到真实的 CSS 尺寸
+    const colors = orbColorsFrom(settings.ballColors);
+    paintStylePreviews(innerGrid, colors);
+    paintStylePreviews(outerGrid, colors);
+
+    innerNote.textContent = t(`ballStyle.source.hint.${settings.ballInnerSource}`);
+    outerNote.textContent = t(`ballStyle.source.hint.${settings.ballOuterSource}`);
+  }
+
+  /** 一排数据源按钮：点一下就把这一圈的数据源换掉。 */
+  function fillSourceGroup(
+    group: HTMLElement,
+    current: string,
+    patchKey: "ballInnerSource" | "ballOuterSource",
+  ) {
+    const frag = document.createDocumentFragment();
+    for (const source of BALL_DATA_SOURCES) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "seg";
+      btn.dataset.source = source;
+      btn.textContent = sourceName(source);
+      btn.title = t(`ballStyle.source.hint.${source}`);
+      const active = source === current;
       btn.classList.toggle("is-active", active);
       btn.setAttribute("aria-pressed", String(active));
-    });
+      btn.addEventListener("click", () => void prefs.patch({ [patchKey]: source }));
+      frag.append(btn);
+    }
+    group.replaceChildren(frag);
+  }
+
+  function renderSourceGroups() {
+    fillSourceGroup(innerSourceGroup, settings.ballInnerSource, "ballInnerSource");
+    fillSourceGroup(outerSourceGroup, settings.ballOuterSource, "ballOuterSource");
+  }
+
+  /* ------------------------------------------------------- 尺寸与律动 */
+
+  function renderMotion() {
+    sizeInput.value = String(settings.ballSize);
+    sizeValue.textContent = settings.ballSize.toFixed(1);
+    gainInput.value = String(settings.ballGain);
+    gainValue.textContent = settings.ballGain.toFixed(1);
+    pulseAmountInput.value = String(settings.ballPulseAmount);
+    pulseAmountValue.textContent = settings.ballPulseAmount.toFixed(1);
+    pulseBox.checked = settings.ballPulse;
+    pulseAmountInput.disabled = !settings.ballPulse;
+
+    const frag = document.createDocumentFragment();
+    for (const algorithm of BALL_PULSE_ALGORITHMS) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "seg";
+      btn.dataset.algorithm = algorithm.id;
+      btn.textContent = t(`ballPulse.${algorithm.id}`);
+      btn.title = t(`ballPulse.hint.${algorithm.id}`);
+      const active = algorithm.id === settings.ballPulseAlgorithm;
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-pressed", String(active));
+      btn.addEventListener("click", () => void prefs.patch({ ballPulseAlgorithm: algorithm.id }));
+      frag.append(btn);
+    }
+    pulseGroup.replaceChildren(frag);
+
+    const enabled = settings.ballPulse;
+    pulseGroup.classList.toggle("is-disabled", !enabled);
+    pulseNote.textContent = t(`ballPulse.hint.${settings.ballPulseAlgorithm}`);
   }
 
   /* -------------------------------------------------------------- 控件同步 */
@@ -377,10 +497,13 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
     });
     autoFollowBox.checked = settings.autoFollow;
     recordWavBox.checked = settings.recordWav;
+
     renderAppGrid();
-    renderBallGrid();
-    renderStyleGrid();
-    renderSourceRow();
+    renderColorSlots();
+    renderPresets();
+    renderStyleGrids();
+    renderSourceGroups();
+    renderMotion();
   }
 
   function sync(next: Settings) {
@@ -468,28 +591,56 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
     if (id) void prefs.patch({ appTheme: id });
   });
 
-  ballGrid.addEventListener("click", (event) => {
-    const card = (event.target as HTMLElement).closest<HTMLButtonElement>(".theme-card");
-    const id = card?.dataset.themeId;
-    if (id) void prefs.patch({ ballTheme: id });
+  colorAddBtn.addEventListener("click", () => {
+    if (settings.ballColors.length >= MAX_BALL_COLORS) return;
+    // 新槽位接在最后一个颜色的后面，加进去就有变化可看
+    const last = settings.ballColors[settings.ballColors.length - 1] ?? DEFAULT_BALL_COLOR;
+    patchColors([...settings.ballColors, last]);
   });
 
-  styleGrid.addEventListener("click", (event) => {
+  colorPresets.addEventListener("click", (event) => {
+    const card = (event.target as HTMLElement).closest<HTMLButtonElement>(".preset-card");
+    const index = card ? [...colorPresets.children].indexOf(card) : -1;
+    const preset = BALL_COLOR_PRESETS[index];
+    if (preset) patchColors([...preset.colors]);
+  });
+
+  innerGrid.addEventListener("click", (event) => {
     const card = (event.target as HTMLElement).closest<HTMLButtonElement>(".style-card");
     const id = card?.dataset.styleId;
-    if (!id) return;
-    // 换了样式以后数据源要重新收敛：新样式可能画不出当前选的那份数据
-    void prefs.patch({
-      ballStyle: id,
-      ballSource: resolveDataSource(id, settings.ballSource),
-    });
+    if (id) void prefs.patch({ ballInnerStyle: id });
   });
 
-  sourceGroup.addEventListener("click", (event) => {
-    const btn = (event.target as HTMLElement).closest<HTMLButtonElement>(".seg");
-    const source = btn?.dataset.source;
-    if (!source) return;
-    void prefs.patch({ ballSource: resolveDataSource(settings.ballStyle, source) });
+  outerGrid.addEventListener("click", (event) => {
+    const card = (event.target as HTMLElement).closest<HTMLButtonElement>(".style-card");
+    const id = card?.dataset.styleId;
+    if (id) void prefs.patch({ ballOuterStyle: id });
+  });
+
+  // 滑块拖动时只更新数字，松手（change）才落盘，免得一路写文件
+  sizeInput.addEventListener("input", () => {
+    sizeValue.textContent = Number(sizeInput.value).toFixed(1);
+  });
+  sizeInput.addEventListener("change", () => {
+    void prefs.patch({ ballSize: Number(sizeInput.value) });
+  });
+
+  gainInput.addEventListener("input", () => {
+    gainValue.textContent = Number(gainInput.value).toFixed(1);
+  });
+  gainInput.addEventListener("change", () => {
+    void prefs.patch({ ballGain: Number(gainInput.value) });
+  });
+
+  pulseAmountInput.addEventListener("input", () => {
+    pulseAmountValue.textContent = Number(pulseAmountInput.value).toFixed(1);
+  });
+  pulseAmountInput.addEventListener("change", () => {
+    void prefs.patch({ ballPulseAmount: Number(pulseAmountInput.value) });
+  });
+
+  pulseBox.addEventListener("change", () => {
+    void prefs.patch({ ballPulse: pulseBox.checked });
   });
 
   resetBtn.addEventListener("click", () => {
@@ -498,9 +649,16 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
 
   ballResetBtn.addEventListener("click", () => {
     void prefs.patch({
-      ballTheme: DEFAULT_BALL_THEME,
-      ballStyle: DEFAULT_BALL_STYLE,
-      ballSource: DEFAULT_BALL_DATA_SOURCE,
+      ballColors: [DEFAULT_BALL_COLOR],
+      ballInnerStyle: DEFAULT_BALL_INNER_STYLE,
+      ballOuterStyle: DEFAULT_BALL_OUTER_STYLE,
+      ballInnerSource: "",
+      ballOuterSource: "",
+      ballSize: 1,
+      ballGain: 1,
+      ballPulse: false,
+      ballPulseAlgorithm: DEFAULT_BALL_PULSE_ALGORITHM,
+      ballPulseAmount: DEFAULT_BALL_PULSE_AMOUNT,
     });
   });
 
