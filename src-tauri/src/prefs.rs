@@ -27,8 +27,6 @@ pub struct Settings {
     pub language: String,
     /// 是否自动跟随出声的窗口。
     pub auto_follow: bool,
-    /// 采集时是否默认录制 WAV。
-    pub record_wav: bool,
     /// 特效渲染的帧率上限（见 `capture::frame_interval_ms`）。`0` = 不限制。
     ///
     /// 它同时管两头：两个窗口的绘制循环按它限帧，采集内核的推帧节奏也按它放慢 ——
@@ -101,7 +99,6 @@ impl Default for Settings {
             app_theme: "solid".to_string(),
             language: "zh-CN".to_string(),
             auto_follow: false,
-            record_wav: false,
             frame_rate: 30,
 
             monitor_target: String::new(),

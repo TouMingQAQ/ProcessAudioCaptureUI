@@ -224,14 +224,13 @@ fn run(app: AppHandle) {
             if armed && idle && backoff == 0 && !busy.load(Ordering::SeqCst) {
                 let pid = window.pid;
                 let name = window.process_name.clone();
-                let record_wav = state.record_wav();
                 busy.store(true, Ordering::SeqCst);
                 let app_for_resume = app.clone();
                 let busy_for_resume = Arc::clone(&busy);
                 let backoff_for_resume = Arc::clone(&resume_backoff);
                 tauri::async_runtime::spawn_blocking(move || {
                     let state = app_for_resume.state::<AppState>();
-                    match start_active(&app_for_resume, &state, pid, name.clone(), record_wav) {
+                    match start_active(&app_for_resume, &state, pid, name.clone()) {
                         Ok(report) => {
                             let message = format!(
                                 "持续监听：已开始采集 {}（PID {}）",
@@ -298,7 +297,6 @@ fn run(app: AppHandle) {
 
         let pid = candidate.pid;
         let process_name = candidate.process_name.clone();
-        let record_wav = state.record_wav();
         drop(state);
 
         busy.store(true, Ordering::SeqCst);
@@ -308,7 +306,7 @@ fn run(app: AppHandle) {
             let state = app_for_switch.state::<AppState>();
             stop_active(&app_for_switch, &state, false);
             let (switched, message) =
-                match start_active(&app_for_switch, &state, pid, process_name.clone(), record_wav) {
+                match start_active(&app_for_switch, &state, pid, process_name.clone()) {
                     Ok(report) => (
                         true,
                         format!("自动跟随切到 {}（PID {}）", report.process_name, report.pid),

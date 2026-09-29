@@ -3,12 +3,10 @@
 //! 关键设计：
 //! * DLL 回调跑在采集线程上，必须极快返回 —— 这里只做一次 `try_lock` + 拷贝，
 //!   拿不到锁宁可丢这一块数据，也绝不阻塞音频线程；
-//! * 发射线程按固定节奏（`EMIT_INTERVAL_MS`）把累计的采样做 DSP 后通过 Tauri 事件推给前端，
-//!   顺带把原始交错采样写进 WAV（如果开启了录制）。
+//! * 发射线程按固定节奏（`EMIT_INTERVAL_MS`）把累计的采样做 DSP 后通过 Tauri 事件推给前端。
 
 use std::collections::VecDeque;
 use std::ffi::c_void;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
@@ -19,7 +17,6 @@ use tauri::{AppHandle, Emitter};
 
 use crate::dsp::{Analyzer, AudioFrame};
 use crate::pac::{PacAudioCallback, PacCaptureHandle, PacFormat, PacLibrary};
-use crate::wav::WavWriter;
 
 /// 前端监听的事件名。
 pub const AUDIO_EVENT: &str = "pac://audio-frame";
@@ -82,8 +79,6 @@ pub struct ActiveCapture {
     pub process_name: String,
     pub started_at: Instant,
     pub counters: Arc<SharedCounters>,
-    pub wav_path: Option<PathBuf>,
-    pub wav_enabled: bool,
 
     lib: Arc<PacLibrary>,
     handle: *mut PacCaptureHandle,
@@ -144,11 +139,6 @@ impl ActiveCapture {
             sample_rate: self.counters.sample_rate.load(Ordering::Relaxed),
             channels: self.counters.channels.load(Ordering::Relaxed),
             duration_ms: self.elapsed().as_millis() as u64,
-            wav_path: if self.wav_enabled {
-                self.wav_path.clone()
-            } else {
-                None
-            },
             dropped_samples: self.counters.dropped_samples.load(Ordering::Relaxed),
             warnings,
         };
@@ -170,7 +160,6 @@ pub struct StopReport {
     pub sample_rate: u32,
     pub channels: u32,
     pub duration_ms: u64,
-    pub wav_path: Option<PathBuf>,
     pub dropped_samples: u64,
     pub warnings: Vec<String>,
 }
@@ -184,7 +173,6 @@ pub struct StartReport {
     pub sample_rate: u32,
     pub channels: u32,
     pub dll_version: u32,
-    pub wav_path: Option<PathBuf>,
     pub warnings: Vec<String>,
 }
 
@@ -196,7 +184,6 @@ pub fn start_capture(
     lib: Arc<PacLibrary>,
     pid: u32,
     process_name: String,
-    wav_path: Option<PathBuf>,
     emit_interval_ms: u32,
 ) -> Result<ActiveCapture, String> {
     let counters = Arc::new(SharedCounters::default());
@@ -242,7 +229,7 @@ pub fn start_capture(
         .channels
         .store(format.channels as u32, Ordering::Relaxed);
 
-    // 发射线程：排空缓冲 → 内核 DSP → 事件推送 / 写盘
+    // 发射线程：排空缓冲 → 内核 DSP → 事件推送
     let started_at = Instant::now();
     let emitter = spawn_emitter(
         app.clone(),
@@ -250,7 +237,6 @@ pub fn start_capture(
         Arc::clone(&queue),
         Arc::clone(&counters),
         Arc::clone(&stop_flag),
-        wav_path.clone(),
         pid,
         started_at,
         format,
@@ -261,8 +247,6 @@ pub fn start_capture(
         process_name,
         started_at,
         counters,
-        wav_path,
-        wav_enabled: true,
         lib,
         handle,
         ctx: ctx_ptr,
@@ -321,7 +305,6 @@ fn spawn_emitter(
     queue: Arc<Mutex<VecDeque<f32>>>,
     counters: Arc<SharedCounters>,
     stop_flag: Arc<AtomicBool>,
-    wav_path: Option<PathBuf>,
     pid: u32,
     started_at: Instant,
     format: PacFormat,
@@ -344,8 +327,6 @@ fn spawn_emitter(
             let mut scratch: Vec<f32> = Vec::with_capacity(65_536);
             // 累积待分析的交错采样（降混与分析都在内核里做）
             let mut pending: Vec<f32> = Vec::with_capacity(65_536);
-            let mut recorder: Option<WavWriter> = None;
-            let mut recorder_failed = false;
             let mut last_emit = Instant::now();
 
             loop {
@@ -362,28 +343,6 @@ fn spawn_emitter(
                 };
 
                 if drained > 0 {
-                    // 原始交错数据直接写 WAV（保留原始声道，不降混）
-                    if let Some(path) = wav_path.as_ref() {
-                        if recorder.is_none() && !recorder_failed {
-                            match WavWriter::create(path, sample_rate, format.channels) {
-                                Ok(w) => recorder = Some(w),
-                                Err(err) => {
-                                    recorder_failed = true;
-                                    let _ = app.emit(
-                                        "pac://error",
-                                        format!("创建 WAV 文件失败：{err}"),
-                                    );
-                                }
-                            }
-                        }
-                        if let Some(w) = recorder.as_mut() {
-                            if w.write_interleaved(&scratch).is_err() {
-                                recorder_failed = true;
-                                recorder = None;
-                            }
-                        }
-                    }
-
                     pending.extend_from_slice(&scratch);
 
                     // 只保留最近 2 秒用于可视化，防止慢消费者拖垮内存
@@ -427,9 +386,6 @@ fn spawn_emitter(
 
                 // 3. 停止条件：内核已停 + 缓冲排空
                 if stop_flag.load(Ordering::SeqCst) && drained == 0 {
-                    if let Some(mut w) = recorder.take() {
-                        let _ = w.finalize();
-                    }
                     let frames = pending.len() / channels;
                     if let Ok(frame) = analyzer.analyze(&pending, frames) {
                         let _ = app.emit(

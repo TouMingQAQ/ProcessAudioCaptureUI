@@ -397,13 +397,12 @@ btnCapture.addEventListener("click", async () => {
             name: report.processName,
             frames: report.totalFrames.toLocaleString(),
             seconds: (report.durationMs / 1000).toFixed(1),
-            wav: report.wavPath ? t("ballWindow.stoppedWav", { path: report.wavPath }) : "",
           }),
           status,
         );
       }
     } else {
-      const report = await api.startCaptureBest(false);
+      const report = await api.startCaptureBest();
       const status = await api.captureStatus();
       applyStatus(status);
       announce(

@@ -2,7 +2,7 @@
  * 设置面板（主界面左下角的「设置」按钮打开）。
  *
  * 四个 tab：
- * * 通用 —— 语言、自动跟随、默认录制；
+ * * 通用 —— 语言、自动跟随；
  * * 主题 —— 深色模式 + 应用主题；
  * * 悬浮球 —— 配色（自定义色槽 + 快捷预设）、律动样式（内圈 / 外圈各一个）、
  *   尺寸与律动（大小、显示倍率、随音频缩放）；
@@ -272,7 +272,6 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
   const langGroup = $<HTMLDivElement>("language-group");
   const frameRateGroup = $<HTMLDivElement>("frame-rate-group");
   const autoFollowBox = $<HTMLInputElement>("set-auto-follow");
-  const recordWavBox = $<HTMLInputElement>("set-record-wav");
   const monitorInput = $<HTMLInputElement>("monitor-target-input");
   const monitorSetBtn = $<HTMLButtonElement>("monitor-target-set");
   const monitorClearBtn = $<HTMLButtonElement>("monitor-target-clear");
@@ -721,7 +720,6 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
       btn.setAttribute("aria-pressed", String(active));
     });
     autoFollowBox.checked = settings.autoFollow;
-    recordWavBox.checked = settings.recordWav;
 
     renderFrameRates();
     renderMonitor();
@@ -822,10 +820,6 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
     }
     monitorInput.value = name;
     void applyMonitorTarget(name);
-  });
-
-  recordWavBox.addEventListener("change", () => {
-    void prefs.patch({ recordWav: recordWavBox.checked });
   });
 
   lockedBox.addEventListener("change", () => {

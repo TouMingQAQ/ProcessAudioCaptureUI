@@ -435,7 +435,7 @@ html[data-rendering="hidden"] .candidate-dot {
 
 .hint {
   margin: 9px 0 0;
-  /* flashHint 会塞进很长的 WAV 路径，固定两行高度避免面板被撑开 */
+  /* flashHint 会塞进较长的提示，固定两行高度避免面板被撑开 */
   height: 30px;
   font-size: 10px;
   line-height: 1.5;

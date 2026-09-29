@@ -42,7 +42,6 @@ export interface StartReport {
   sampleRate: number;
   channels: number;
   dllVersion: number;
-  wavPath: string | null;
   warnings: string[];
 }
 
@@ -53,7 +52,6 @@ export interface StopReport {
   sampleRate: number;
   channels: number;
   durationMs: number;
-  wavPath: string | null;
   droppedSamples: number;
   warnings: string[];
 }
@@ -121,7 +119,6 @@ export interface Settings {
   appTheme: string;
   language: Language;
   autoFollow: boolean;
-  recordWav: boolean;
   /**
    * 特效渲染的帧率上限（0 = 不限制）。
    *
@@ -239,11 +236,10 @@ export const api = {
   reloadDll: () => invoke<DllStatus>("reload_dll"),
   listWindows: () => invoke<WindowListResult>("list_audio_windows"),
   captureStatus: () => invoke<CaptureStatus>("capture_status"),
-  startCapture: (pid: number, processName: string, recordWav: boolean) =>
-    invoke<StartReport>("start_capture", { pid, processName, recordWav }),
+  startCapture: (pid: number, processName: string) =>
+    invoke<StartReport>("start_capture", { pid, processName }),
   /** 让后端自己挑一个正在出声的窗口开始采集。 */
-  startCaptureBest: (recordWav: boolean) =>
-    invoke<StartReport>("start_capture_best", { recordWav }),
+  startCaptureBest: () => invoke<StartReport>("start_capture_best"),
   stopCapture: () => invoke<StopReport | null>("stop_capture"),
   setAutoFollow: (enabled: boolean) => invoke<boolean>("set_auto_follow", { enabled }),
   /**

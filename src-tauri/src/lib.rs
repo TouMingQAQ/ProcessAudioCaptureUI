@@ -25,7 +25,6 @@ mod pac;
 mod prefs;
 mod sessions;
 mod tray;
-mod wav;
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -69,8 +68,6 @@ pub struct AppState {
     load_error: Mutex<Option<String>>,
     /// 自动跟随：当前采集源静音、且出现了新的发声窗口时自动切过去。
     auto_follow: AtomicBool,
-    /// 最近一次使用的"顺便录 WAV"设置，自动跟随切换时会沿用。
-    record_wav: AtomicBool,
     /// 窗口检测名单（白 / 黑）。扫描线程每 1.2 秒就要用一次，每次都读文件撑不住，
     /// 所以跟 `auto_follow` 一样在状态里存一份，改设置时同步过来。
     window_allowlist: Mutex<Vec<String>>,
@@ -146,10 +143,6 @@ impl AppState {
 
     pub(crate) fn auto_follow(&self) -> bool {
         self.auto_follow.load(Ordering::Relaxed)
-    }
-
-    pub(crate) fn record_wav(&self) -> bool {
-        self.record_wav.load(Ordering::Relaxed)
     }
 
     /// 窗口名单快照（`(白名单, 黑名单)`）。克隆一份出去，别拿着锁去跑枚举。
@@ -343,26 +336,21 @@ pub(crate) fn start_active(
     state: &AppState,
     pid: u32,
     process_name: String,
-    record_wav: bool,
 ) -> Result<StartReport, String> {
     if pid == 0 {
         return Err("PID 无效".to_string());
     }
 
-    state.record_wav.store(record_wav, Ordering::Relaxed);
-
     // 先停掉上一个会话（静默停：这是切换，不是用户点停止）
     stop_active(app, state, false);
 
     let library = ensure_library(app, state)?;
-    let wav_path = record_wav.then(|| recording_path(app, &process_name, pid));
 
     let active = capture::start_capture(
         app.clone(),
         Arc::clone(&library),
         pid,
         process_name,
-        wav_path.clone(),
         state.emit_interval_ms(),
     )?;
 
@@ -374,7 +362,6 @@ pub(crate) fn start_active(
         sample_rate: active.counters.sample_rate.load(Ordering::Relaxed),
         channels: active.counters.channels.load(Ordering::Relaxed),
         dll_version: library.version(),
-        wav_path,
         warnings: Vec::new(),
     };
 
@@ -425,7 +412,6 @@ async fn start_capture(
     app: AppHandle,
     pid: u32,
     process_name: String,
-    record_wav: bool,
 ) -> Result<StartReport, String> {
     if pid == 0 {
         return Err("PID 无效".to_string());
@@ -433,7 +419,7 @@ async fn start_capture(
 
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        start_active(&app, &state, pid, process_name, record_wav)
+        start_active(&app, &state, pid, process_name)
     })
     .await
     .map_err(|e| format!("启动任务异常：{e}"))?
@@ -441,10 +427,7 @@ async fn start_capture(
 
 /// 自动挑一个当前正在出声的窗口开始采集（悬浮球上的"开始采集"用它）。
 #[tauri::command]
-async fn start_capture_best(
-    app: AppHandle,
-    record_wav: bool,
-) -> Result<StartReport, String> {
+async fn start_capture_best(app: AppHandle) -> Result<StartReport, String> {
     let app_for_pick = app.clone();
     let target = tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
         let state = app_for_pick.state::<AppState>();
@@ -464,19 +447,13 @@ async fn start_capture_best(
 
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        start_active(
-            &app,
-            &state,
-            target.pid,
-            target.process_name.clone(),
-            record_wav,
-        )
+        start_active(&app, &state, target.pid, target.process_name.clone())
     })
     .await
     .map_err(|e| format!("启动任务异常：{e}"))?
 }
 
-/// 停止捕获，返回本次会话汇总（帧数 / 时长 / WAV 路径）。
+/// 停止捕获，返回本次会话汇总（帧数 / 时长）。
 #[tauri::command]
 async fn stop_capture(
     app: AppHandle,
@@ -536,9 +513,7 @@ async fn set_monitor_target(app: AppHandle, process_name: String) -> Result<(), 
                     return Ok(());
                 }
                 stop_active(&app, &state, false);
-                let record_wav = state.record_wav();
-                match start_active(&app, &state, window.pid, window.process_name.clone(), record_wav)
-                {
+                match start_active(&app, &state, window.pid, window.process_name.clone()) {
                     Ok(report) => {
                         state.set_monitor_waiting(false);
                         notify_capture_changed(
@@ -640,7 +615,6 @@ fn save_settings(
 
     // 这几个开关的真身在 AppState 上（采集线程 / 自动跟随 / 扫描线程都要读），顺手同步过去
     state.auto_follow.store(settings.auto_follow, Ordering::Relaxed);
-    state.record_wav.store(settings.record_wav, Ordering::Relaxed);
     state.set_window_lists(&settings.window_allowlist, &settings.window_blocklist);
     // 帧率：正在跑的会话也一起换成新的推帧节奏
     state.set_frame_rate(settings.frame_rate);
@@ -764,28 +738,6 @@ fn place_ball(window: &WebviewWindow) {
     let _ = window.set_ignore_cursor_events(true);
 }
 
-fn recording_path(app: &AppHandle, process_name: &str, pid: u32) -> std::path::PathBuf {
-    let stem = std::path::Path::new(process_name)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .filter(|s| !s.is_empty())
-        .unwrap_or("capture")
-        .to_string();
-
-    let dir = app
-        .path()
-        .download_dir()
-        .or_else(|_| app.path().app_data_dir())
-        .unwrap_or_else(|_| std::env::temp_dir());
-
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-
-    dir.join(format!("pac_{stem}_{pid}_{stamp}.wav"))
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -828,13 +780,12 @@ pub fn run() {
                 }
             }
 
-            // 上次的偏好：自动跟随 / 默认录 WAV / 帧率 / 监听缓存都要先进状态机，
+            // 上次的偏好：自动跟随 / 帧率 / 监听缓存都要先进状态机，
             // 界面还没起来就得生效
             {
                 let settings = prefs::load(&handle);
                 let state = app.state::<AppState>();
                 state.auto_follow.store(settings.auto_follow, Ordering::Relaxed);
-                state.record_wav.store(settings.record_wav, Ordering::Relaxed);
                 state.set_window_lists(&settings.window_allowlist, &settings.window_blocklist);
                 state.ball.set_locked(settings.ball_locked);
                 state.set_frame_rate(settings.frame_rate);

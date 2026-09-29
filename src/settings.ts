@@ -45,7 +45,6 @@ export const DEFAULT_SETTINGS: Settings = {
   appTheme: DEFAULT_APP_THEME,
   language: "zh-CN",
   autoFollow: false,
-  recordWav: false,
 
   // 特效渲染的帧率上限：默认 30。0 = 不限（见 [`normalizeFrameRate`]）
   frameRate: DEFAULT_FRAME_RATE,

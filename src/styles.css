@@ -290,6 +290,12 @@ html[data-rendering="hidden"] .sparkle {
   color: var(--ui-danger-ink);
 }
 
+/* 停止采集：hover 时保持危险色渐变，不跟着上面那条通用 .btn:hover 被刷成素色 */
+.btn-danger:hover:not(:disabled) {
+  background: linear-gradient(135deg, var(--ui-danger), var(--ui-accent));
+  color: var(--ui-danger-ink);
+}
+
 .btn-ghost[aria-pressed="true"] {
   border-color: var(--ui-ok);
   background: var(--ui-ok-soft);
@@ -1214,6 +1220,28 @@ html[data-rendering="hidden"] .sparkle {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
   gap: 10px;
+}
+
+/*
+ * 律动样式：内 / 外圈各自是「数据源行 → 卡片网格 → 说明」三层，两组上下叠着。
+ * 默认挨得太紧（数据源行 0、说明 6px），这里把层与层之间统一拉开。
+ */
+.set-block-style .style-grid {
+  margin-top: 10px;
+}
+
+.set-block-style .set-note {
+  margin-top: 8px;
+}
+
+/* 第一组（内圈）上方：用父级 padding，免得子元素的 margin 塌到 body 外面去 */
+.set-block-style .set-block-body {
+  padding-top: 12px;
+}
+
+/* 外面那圈：说明文字下面再空一档，才看得出这是"另一组"而不是同一组的补充说明 */
+.set-block-style .set-note + .set-row {
+  margin-top: 18px;
 }
 
 .style-card {

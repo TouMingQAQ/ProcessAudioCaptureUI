@@ -38,7 +38,6 @@ const btnCapture = $<HTMLButtonElement>("btn-capture");
 const followMain = $<HTMLInputElement>("follow-main");
 const searchInput = $<HTMLInputElement>("search");
 const filterAudio = $<HTMLInputElement>("filter-audio");
-const recordWav = $<HTMLInputElement>("record-wav");
 const windowList = $<HTMLDivElement>("window-list");
 const windowCount = $<HTMLSpanElement>("window-count");
 const blockedNote = $<HTMLDivElement>("list-blocked");
@@ -342,7 +341,7 @@ async function startCapture() {
   btnCapture.textContent = t("view.capturing");
 
   try {
-    const report = await api.startCapture(selectedPid, win?.processName ?? "", recordWav.checked);
+    const report = await api.startCapture(selectedPid, win?.processName ?? "");
     capturingPid = report.pid;
     visualizer.setActive(true);
     document.documentElement.dataset.capture = "live";
@@ -360,7 +359,6 @@ async function startCapture() {
         channels: report.channels || "?",
       }),
     );
-    if (report.wavPath) log(t("capture.recording", { path: report.wavPath }));
     report.warnings.forEach((w) => log(w, "warn"));
   } catch (err) {
     setSessionState("session.failed", "pill-error");
@@ -448,11 +446,6 @@ function handleStopped(report: StopReport | null) {
   );
   if (report.droppedSamples > 0) {
     log(t("capture.dropped", { n: report.droppedSamples.toLocaleString() }), "warn");
-  }
-  if (report.wavPath) {
-    log(t("capture.wavSaved", { path: report.wavPath }));
-  } else if (recordWav.checked) {
-    log(t("capture.wavMissing"), "warn");
   }
   report.warnings.forEach((w) => log(w, "warn"));
 }
@@ -588,8 +581,7 @@ async function bootstrap() {
   applyI18n();
   refreshTexts();
 
-  // 记录 / 自动跟随这两个开关可能在上次运行时改过，先把界面同步过来
-  recordWav.checked = settings.recordWav;
+  // 自动跟随这个开关可能在上次运行时改过，先把界面同步过来
   followMain.checked = settings.autoFollow;
 
   const unlisteners: UnlistenFn[] = [];
@@ -627,7 +619,6 @@ async function bootstrap() {
       // 换了语言要把所有文案重刷，换了主题要重新读一次画布颜色
       visualizer.refreshTheme();
       visualizer.setFrameLimit(next.frameRate);
-      recordWav.checked = next.recordWav;
       followMain.checked = next.autoFollow;
       autoFollow = next.autoFollow;
       // 名单变了得重过一遍列表：刚被挡掉的窗口要立刻消失
@@ -688,10 +679,6 @@ async function bootstrap() {
       log(t("follow.failed", { err: String(err) }), "error");
     }
   });
-  recordWav.addEventListener("change", () => {
-    void prefs.patch({ recordWav: recordWav.checked });
-  });
-
   await refreshDllStatus(false);
   await refreshWindows();
 

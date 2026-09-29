@@ -70,7 +70,6 @@ const ZH: Dict = {
   "view.capturing": "激活中…",
   "view.stop": "停止采集",
   "view.stopping": "停止中…",
-  "view.recordWav": "顺便录成 WAV（存到「下载」目录）",
   "view.autoFollow": "自动跟随最响的窗口",
   "view.waveHead": "波形（峰谷包络）",
   "view.specHead": "频谱（20 Hz → Nyquist，对数轴）",
@@ -80,7 +79,6 @@ const ZH: Dict = {
   "view.peak": "峰值",
 
   "capture.started": "开始采集 {name} (PID {pid})，格式 {rate} Hz / {channels} 声道",
-  "capture.recording": "录制中：{path}",
   "capture.startFailed": "启动采集失败：{err}",
   "capture.stopFailed": "停止采集失败：{err}",
   "capture.nothing": "没有正在进行的采集",
@@ -88,8 +86,6 @@ const ZH: Dict = {
   "capture.adoptedStop": "采集已停止，界面已同步",
   "capture.stopped": "已停止：{name} · 共 {frames} 帧 / {seconds} 秒 · {rate} Hz {channels}ch",
   "capture.dropped": "因缓冲溢出丢弃了 {n} 个采样",
-  "capture.wavSaved": "WAV 已保存：{path}",
-  "capture.wavMissing": "未生成 WAV（可能未收到任何音频数据）",
   "capture.tickSub": "{who} · PID {pid} · {rate} Hz / {channels} 声道",
   "capture.minimized": "窗口已最小化，读不到标题",
 
@@ -158,8 +154,6 @@ const ZH: Dict = {
   "settings.general.frameRateUnit": "{fps} fps",
   "settings.general.autoFollow": "启动时自动跟随最响的窗口",
   "settings.general.autoFollowHint": "开启后，当前窗口安静下来、别的窗口开始出声时会自动切过去。",
-  "settings.general.recordWav": "采集时默认录制 WAV",
-  "settings.general.recordWavHint": "主界面上的「顺便录成 WAV」会跟着这个开关走，文件存在「下载」目录。",
   "settings.general.behaviour": "行为",
   "settings.general.monitor": "持续监听",
   "settings.general.monitorHint": "记住最近监听的进程，下次启动自动接着听；它不在（没开 / 已经退出）就一直等它出现。",
@@ -232,8 +226,7 @@ const ZH: Dict = {
   "ballWindow.stopping": "停止中…",
   "ballWindow.candidateSwitch": "「{name}」也在出声，若当前窗口安静下来会自动切过去",
   "ballWindow.candidateStart": "「{name}」正在出声，可以开始采集",
-  "ballWindow.stopped": "已停止：{name} · {frames} 帧 / {seconds}s{wav}",
-  "ballWindow.stoppedWav": " · WAV：{path}",
+  "ballWindow.stopped": "已停止：{name} · {frames} 帧 / {seconds}s",
   "ballWindow.started": "已开始采集 {name} · {rate} Hz / {channels} 声道",
   "ballWindow.follow": "自动跟随",
   "ballWindow.capture": "开始采集",
@@ -345,7 +338,6 @@ const EN: Dict = {
   "view.capturing": "Activating…",
   "view.stop": "Stop capture",
   "view.stopping": "Stopping…",
-  "view.recordWav": "Also record a WAV (saved to Downloads)",
   "view.autoFollow": "Follow the loudest window",
   "view.waveHead": "Waveform (peak envelope)",
   "view.specHead": "Spectrum (20 Hz → Nyquist, log scale)",
@@ -355,7 +347,6 @@ const EN: Dict = {
   "view.peak": "Peak",
 
   "capture.started": "Capturing {name} (PID {pid}), format {rate} Hz / {channels} ch",
-  "capture.recording": "Recording to {path}",
   "capture.startFailed": "Could not start capture: {err}",
   "capture.stopFailed": "Could not stop capture: {err}",
   "capture.nothing": "No capture in progress",
@@ -363,8 +354,6 @@ const EN: Dict = {
   "capture.adoptedStop": "The capture stopped — the window is in sync now",
   "capture.stopped": "Stopped: {name} · {frames} frames / {seconds}s · {rate} Hz {channels}ch",
   "capture.dropped": "Dropped {n} samples due to a buffer overflow",
-  "capture.wavSaved": "WAV saved: {path}",
-  "capture.wavMissing": "No WAV was written (maybe no audio arrived)",
   "capture.tickSub": "{who} · PID {pid} · {rate} Hz / {channels} ch",
   "capture.minimized": "Window is minimised, title unavailable",
 
@@ -449,9 +438,6 @@ const EN: Dict = {
   "settings.general.autoFollow": "Auto-follow the loudest window on startup",
   "settings.general.autoFollowHint":
     "When the current window goes quiet and another starts playing, capture moves over.",
-  "settings.general.recordWav": "Record a WAV by default",
-  "settings.general.recordWavHint":
-    "The “Also record a WAV” switch in the main window follows this. Files go to Downloads.",
   "settings.general.behaviour": "Behaviour",
   "settings.general.trayNote":
     "Closing the main window only hides it to the tray — capture and the orb keep running. Use “Quit” in the tray menu to exit.",
@@ -515,8 +501,7 @@ const EN: Dict = {
   "ballWindow.stopping": "Stopping…",
   "ballWindow.candidateSwitch": "“{name}” is playing too — capture will move over once this one goes quiet",
   "ballWindow.candidateStart": "“{name}” is playing — you can start capturing",
-  "ballWindow.stopped": "Stopped: {name} · {frames} frames / {seconds}s{wav}",
-  "ballWindow.stoppedWav": " · WAV: {path}",
+  "ballWindow.stopped": "Stopped: {name} · {frames} frames / {seconds}s",
   "ballWindow.started": "Capturing {name} · {rate} Hz / {channels} ch",
   "ballWindow.follow": "Auto-follow",
   "ballWindow.capture": "Start capture",

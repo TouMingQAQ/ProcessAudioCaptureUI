@@ -248,8 +248,7 @@ fn toggle_capture(app: &AppHandle) {
             return;
         };
 
-        // record_wav = false：和悬浮球的"开始采集"保持一致，快捷入口不偷偷往硬盘写文件
-        match start_active(&app, &state, target.pid, target.process_name.clone(), false) {
+        match start_active(&app, &state, target.pid, target.process_name.clone()) {
             Ok(report) => notify(
                 &app,
                 Some(report.pid),

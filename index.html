@@ -102,10 +102,6 @@
 
           <div class="options-row">
             <label class="switch switch-inline">
-              <input id="record-wav" type="checkbox" />
-              <span data-i18n="view.recordWav">顺便录成 WAV（存到「下载」目录）</span>
-            </label>
-            <label class="switch switch-inline">
               <input id="follow-main" type="checkbox" />
               <span data-i18n="view.autoFollow">自动跟随最响的窗口</span>
             </label>
@@ -224,14 +220,6 @@
                 <p class="set-note" data-i18n="settings.general.autoFollowHint">
                   开启后，当前窗口安静下来、别的窗口开始出声时会自动切过去。
                 </p>
-
-                <label class="switch switch-block">
-                  <input id="set-record-wav" type="checkbox" />
-                  <span data-i18n="settings.general.recordWav">采集时默认录制 WAV</span>
-                </label>
-                <p class="set-note" data-i18n="settings.general.recordWavHint">
-                  主界面上的「顺便录成 WAV」会跟着这个开关走，文件存在「下载」目录。
-                </p>
               </section>
 
               <!-- 监听缓存：记住上次监听的进程，启动自动接着听 -->
@@ -343,7 +331,7 @@
               </section>
 
               <!-- 样式：可折叠 -->
-              <section class="set-block is-collapsible" data-collapsed="false">
+              <section class="set-block set-block-style is-collapsible" data-collapsed="false">
                 <button class="set-block-head is-collapsible" type="button" aria-expanded="true">
                   <span class="collapse-caret" aria-hidden="true"></span>
                   <span class="set-block-text">
