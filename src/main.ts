@@ -288,7 +288,8 @@ async function stopCapture() {
   }
 }
 
-function handleStopped(report: StopReport | null) {
+/** 把"正在采集"那套界面复位。自己停的、别处（悬浮球 / 托盘）停的，都走这里。 */
+function resetCaptureUi() {
   capturingPid = null;
   setSessionState("session.idle", "pill-idle");
   btnCapture.textContent = t("view.capture");
@@ -298,6 +299,39 @@ function handleStopped(report: StopReport | null) {
   visualizer.reset();
   renderWindowList();
   refreshTexts();
+}
+
+/**
+ * 把主界面拉到"别处已经改过"的采集状态。
+ *
+ * 采集不只从这里开始 —— 悬浮球和托盘都能开关，而主界面并不知道。两个 WebView 之间
+ * 没有共享内存，只能靠这个函数对齐：`pac://capture-changed` 一到就查一次真实状态，
+ * 每秒的扫描 tick 里也带着同样的字段，哪边先到就用哪边。
+ */
+function adoptCaptureState(active: boolean, pid: number | null, name: string | null) {
+  if (active === (capturingPid !== null)) return;
+
+  if (!active) {
+    resetCaptureUi();
+    log(t("capture.adoptedStop"));
+    return;
+  }
+
+  capturingPid = pid;
+  if (pid !== null) selectedPid = pid;
+  visualizer.reset();
+  setSessionState("session.live", "pill-live");
+  btnCapture.textContent = t("view.stop");
+  btnCapture.disabled = false;
+  btnCapture.classList.remove("btn-primary");
+  btnCapture.classList.add("btn-danger");
+  renderWindowList();
+  renderSelected();
+  log(t("capture.adopted", { name: name ?? t("list.unknownProcess"), pid: pid ?? "—" }));
+}
+
+function handleStopped(report: StopReport | null) {
+  resetCaptureUi();
 
   if (!report) {
     log(t("capture.nothing"));
@@ -358,6 +392,10 @@ function applyTick(tick: MonitorTick) {
     autoFollow = tick.autoFollow;
     followMain.checked = autoFollow;
   }
+
+  // 悬浮球或托盘开关过采集时，主界面得跟上 —— 这是两个窗口之间唯一的同步途径
+  adoptCaptureState(tick.active, tick.pid, tick.capturing?.processName ?? null);
+
   if (!tick.active || capturingPid === null) return;
 
   const name = tick.capturing?.processName ?? tick.processName ?? t("list.unknownProcess");
@@ -433,6 +471,11 @@ async function bootstrap() {
   unlisteners.push(
     await listen<CaptureChanged>(EVT_CAPTURE_CHANGED, (event) => {
       log(event.payload.message, event.payload.switched ? "info" : "warn");
+      // 悬浮球那边动过采集：拉一次真实状态跟着同步（事件本身不区分开始 / 停止）
+      void api
+        .captureStatus()
+        .then((status) => adoptCaptureState(status.active, status.pid, status.processName))
+        .catch(() => {});
     }),
   );
   unlisteners.push(

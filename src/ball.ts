@@ -1,4 +1,4 @@
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import "./ball.css";
 import {
   EVT_AUDIO,
@@ -259,6 +259,22 @@ function flashHint(text: string) {
   }, 5200);
 }
 
+/**
+ * 在小球面板上提示一句，并**告诉另一个窗口**采集状态变了。
+ *
+ * 主界面与悬浮球是两个 WebView，采集却能在这里开关；那边只认 `pac://capture-changed`
+ * 和每秒一次的扫描 —— 不广播这一下，它就得等下一次扫描（1.2 秒）才跟上。
+ */
+function announce(message: string, status: CaptureStatus) {
+  flashHint(message);
+  void emit(EVT_CAPTURE_CHANGED, {
+    pid: status.pid ?? 0,
+    processName: status.processName ?? "",
+    switched: false,
+    message,
+  }).catch(() => {});
+}
+
 function syncCaptureButton() {
   if (busy) {
     btnCapture.textContent = capturing ? t("ballWindow.stopping") : t("ballWindow.starting");
@@ -357,26 +373,30 @@ btnCapture.addEventListener("click", async () => {
   try {
     if (capturing) {
       const report = await api.stopCapture();
-      applyStatus(await api.captureStatus());
+      const status = await api.captureStatus();
+      applyStatus(status);
       if (report) {
-        flashHint(
+        announce(
           t("ballWindow.stopped", {
             name: report.processName,
             frames: report.totalFrames.toLocaleString(),
             seconds: (report.durationMs / 1000).toFixed(1),
             wav: report.wavPath ? t("ballWindow.stoppedWav", { path: report.wavPath }) : "",
           }),
+          status,
         );
       }
     } else {
       const report = await api.startCaptureBest(false);
-      applyStatus(await api.captureStatus());
-      flashHint(
+      const status = await api.captureStatus();
+      applyStatus(status);
+      announce(
         t("ballWindow.started", {
           name: report.processName,
           rate: report.sampleRate || "?",
           channels: report.channels || "?",
         }),
+        status,
       );
     }
   } catch (err) {
