@@ -1,6 +1,6 @@
 [package]
 name = "process-audio-capture-ui"
-version = "0.0.3"
+version = "0.0.4"
 description = "进程音频监听：挑一个正在出声的程序，实时看它的波形与频谱"
 authors = ["ProcessAudioCaptrueUI"]
 edition = "2021"
