@@ -86,6 +86,10 @@ export interface MonitorTick extends CaptureStatus {
   /** SMTC 读到的媒体信息；窗口标题读不到（播放器缩进托盘）时靠它。 */
   media: MediaInfo | null;
   autoFollow: boolean;
+  /** 持续监听的目标进程名（小写）；没有目标时为 `null`。 */
+  monitorTarget: string | null;
+  /** 目标不在线，正在等它出现。 */
+  waiting: boolean;
 }
 
 /** `pac://capture-changed` 事件的负载。 */
@@ -118,6 +122,21 @@ export interface Settings {
   language: Language;
   autoFollow: boolean;
   recordWav: boolean;
+  /**
+   * 特效渲染的帧率上限（0 = 不限制）。
+   *
+   * 同一个数管两头：两个窗口的绘制循环按它限帧，采集内核的推帧节奏也按它放慢 ——
+   * 只限绘制的话，事件里那 700 多个数字照样每秒被解析几十次。
+   */
+  frameRate: number;
+  /**
+   * 持续监听的目标进程名（小写，带扩展名）。空串 = 没有目标。
+   *
+   * 每次成功起流都会由后端刷新成那一次的进程；下次启动凭它自动接着监听，
+   * 目标不在线时一直等它出现。改它要走 `setMonitorTarget`（有起流 / 停流的副作用），
+   * 不是普通字段。
+   */
+  monitorTarget: string;
 
   /** 窗口检测白名单（进程名，小写）。空数组 = 不限制；非空则只有名单里的进程能被检测到。 */
   windowAllowlist: string[];
@@ -173,10 +192,26 @@ export const EVT_CAPTURE_CHANGED = "pac://capture-changed";
 export const EVT_SETTINGS = "pac://settings";
 /** 后端轮询光标后广播的悬浮球悬停状态（见 `src-tauri/src/ball.rs`）。 */
 export const EVT_BALL_HOVER = "pac://ball-hover";
+/**
+ * 窗口"藏起来 / 露出来"事件名的前缀，实际名字还带窗口标签：
+ * `pac://window-visibility:main` / `pac://window-visibility:ball`。
+ *
+ * 为什么连名字都要分开：Tauri 里 `listen()` 不指定 target 时注册的是 `EventTarget::Any`，
+ * 而定向投递的过滤是"**Any 监听者一律放行**"（`tauri::event::listener::match_any_or_filter`），
+ * 也就是说两个窗口监听同一个名字的话，`emit_to("main", …)` 会连悬浮球那份一起送到 ——
+ * 主界面一收进托盘，小球就不动了。名字按窗口分开（并且前端再显式带上 target），
+ * 才是真的各管各的（见 `render-gate.ts`）。
+ */
+export const EVT_VISIBILITY = "pac://window-visibility";
 
 /** `pac://ball-hover` 事件的负载。 */
 export interface BallHover {
   hovered: boolean;
+}
+
+/** `pac://window-visibility` 事件的负载。 */
+export interface VisibilityPayload {
+  visible: boolean;
 }
 
 /**
@@ -211,6 +246,14 @@ export const api = {
     invoke<StartReport>("start_capture_best", { recordWav }),
   stopCapture: () => invoke<StopReport | null>("stop_capture"),
   setAutoFollow: (enabled: boolean) => invoke<boolean>("set_auto_follow", { enabled }),
+  /**
+   * 手动设置持续监听对象（空串 = 清除）。
+   *
+   * 有副作用：目标在跑就直接切过去采，不在跑就记下来一直等它出现。所以它不跟普通设置
+   * 一起走 `saveSettings`。
+   */
+  setMonitorTarget: (processName: string) =>
+    invoke<void>("set_monitor_target", { processName }),
   /** 本应用自己的进程名（小写，带扩展名）—— 黑名单里那条锁定项就是它。 */
   selfProcessName: () => invoke<string>("self_process_name"),
   setBallVisible: (visible: boolean) => invoke<void>("set_ball_visible", { visible }),

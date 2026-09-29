@@ -61,6 +61,15 @@ interface LayerCtx extends DrawCtx {
 }
 
 const TAU = Math.PI * 2;
+const MAX_RENDER_DPR = 1.5;
+
+interface CanvasCache {
+  ctx: CanvasRenderingContext2D;
+  halo: CanvasGradient | null;
+  haloKey: string;
+}
+
+const canvasCaches = new WeakMap<HTMLCanvasElement, CanvasCache>();
 
 /** 空闲时柱子的轻微呼吸幅度 —— 没在采集也不是一块死掉的贴图。 */
 const IDLE_BREATH = 0.1;
@@ -99,14 +108,20 @@ export function renderOrb(
   dpr = 1,
 ): void {
   const css = Math.max(1, Math.floor(size));
-  const ratio = Math.max(1, Math.min(dpr, 2));
+  const ratio = Math.max(1, Math.min(dpr, MAX_RENDER_DPR));
   const px = Math.floor(css * ratio);
+  let cache = canvasCaches.get(canvas);
   if (canvas.width !== px || canvas.height !== px) {
     canvas.width = px;
     canvas.height = px;
+    cache = undefined;
   }
-  const ctx = canvas.getContext("2d");
+  const ctx = canvas.getContext("2d", { alpha: true, desynchronized: true });
   if (!ctx) return;
+  if (!cache || cache.ctx !== ctx) {
+    cache = { ctx, halo: null, haloKey: "" };
+    canvasCaches.set(canvas, cache);
+  }
 
   canvas.style.width = `${css}px`;
   canvas.style.height = `${css}px`;
@@ -135,8 +150,17 @@ export function renderOrb(
     time: frame.time,
   };
 
-  // 外发光是所有样式共用的底子，先铺上
-  drawHalo(ctx, shared);
+  // 外发光是所有样式共用的底子，先铺上；尺寸和颜色不变时复用渐变对象。
+  const haloKey = `${css}|${colors.halo}|${colors.haloMid}`;
+  if (!cache.halo || cache.haloKey !== haloKey) {
+    const halo = ctx.createRadialGradient(center, center, size * 0.16, center, center, center);
+    halo.addColorStop(0, colors.halo);
+    halo.addColorStop(0.62, colors.haloMid);
+    halo.addColorStop(1, "rgba(255, 255, 255, 0)");
+    cache.halo = halo;
+    cache.haloKey = haloKey;
+  }
+  drawHalo(ctx, shared, cache.halo);
 
   innerStyleDraw[innerStyle.id]?.(ctx, { ...shared, ...frame.inner });
   outerStyleDraw[outerStyle.id]?.(ctx, { ...shared, ...frame.outer });
@@ -157,12 +181,8 @@ export function renderOrb(
 /* -------------------------------------------------------------- 公用零件 */
 
 /** 环形渐变外发光。 */
-function drawHalo(ctx: CanvasRenderingContext2D, d: DrawCtx) {
-  const { center, size, colors } = d;
-  const halo = ctx.createRadialGradient(center, center, size * 0.16, center, center, center);
-  halo.addColorStop(0, colors.halo);
-  halo.addColorStop(0.62, colors.haloMid);
-  halo.addColorStop(1, "rgba(255, 255, 255, 0)");
+function drawHalo(ctx: CanvasRenderingContext2D, d: DrawCtx, halo: CanvasGradient) {
+  const { center } = d;
   ctx.globalAlpha = 1;
   ctx.fillStyle = halo;
   ctx.beginPath();

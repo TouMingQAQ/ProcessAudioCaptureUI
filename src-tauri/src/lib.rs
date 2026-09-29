@@ -27,16 +27,40 @@ mod sessions;
 mod tray;
 mod wav;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, WebviewWindow};
 
 use capture::{ActiveCapture, StartReport, StopReport};
 use pac::PacLibrary;
 use prefs::Settings;
 use sessions::WindowListResult;
+
+/// 窗口"藏起来 / 露出来"事件名的前缀。完整名字还带窗口标签：
+/// `pac://window-visibility:main` / `pac://window-visibility:ball`。
+pub const VISIBILITY_EVENT: &str = "pac://window-visibility";
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VisibilityPayload {
+    pub visible: bool,
+}
+
+/// 告诉某个窗口"你现在可见 / 不可见"，前端据此开关特效渲染（见前端 `render-gate.ts`）。
+///
+/// 两道锁，缺一不可：
+///
+/// 1. **事件名带窗口标签**。Tauri 的定向投递只按"监听者声明的 target"过滤，而前端
+///    `listen()` 不带 target 时注册的是 `EventTarget::Any` —— 过滤里 Any 一律放行
+///    （`tauri::event::listener::match_any_or_filter`）。两边听同一个名字的话，藏起主界面
+///    会把悬浮球那份一起送到，小球跟着不动了。
+/// 2. 投递本身也是定向的（`emit_to`，不是 `emit`）。
+pub(crate) fn emit_visibility(app: &AppHandle, label: &str, visible: bool) {
+    let event = format!("{VISIBILITY_EVENT}:{label}");
+    let _ = app.emit_to(label, &event, VisibilityPayload { visible });
+}
 
 #[derive(Default)]
 pub struct AppState {
@@ -51,6 +75,15 @@ pub struct AppState {
     /// 所以跟 `auto_follow` 一样在状态里存一份，改设置时同步过来。
     window_allowlist: Mutex<Vec<String>>,
     window_blocklist: Mutex<Vec<String>>,
+    /// 特效渲染的帧率上限（0 = 不限）。开新会话时换算成推帧间隔交给发射线程。
+    frame_rate: AtomicU32,
+    /// 持续监听的目标进程名（小写）。空 = 没有目标。
+    monitor_target: Mutex<String>,
+    /// 是否允许"目标一出现就自动起流"。用户点过停止就落回 false —— 不然他刚停下来，
+    /// 下一轮扫描又把它拉起来了。
+    monitor_armed: AtomicBool,
+    /// 目标当前不在线、正在等它出现（界面据此显示"等待中"）。
+    monitor_waiting: AtomicBool,
     /// 悬浮球的可交互区域与拖动状态（悬停检测线程要用，见 [`ball`]）。
     ball: ball::BallInteraction,
 }
@@ -130,6 +163,87 @@ impl AppState {
     pub(crate) fn set_window_lists(&self, allow: &[String], block: &[String]) {
         *lock(&self.window_allowlist) = allow.to_vec();
         *lock(&self.window_blocklist) = block.to_vec();
+    }
+
+    /// 当前帧率上限（0 = 不限）。
+    pub(crate) fn frame_rate(&self) -> u32 {
+        self.frame_rate.load(Ordering::Relaxed)
+    }
+
+    /// 现在该用的推帧间隔（毫秒）。
+    pub(crate) fn emit_interval_ms(&self) -> u32 {
+        capture::frame_interval_ms(self.frame_rate())
+    }
+
+    /// 改帧率。正在跑的会话也一起跟上 —— 不用停流重开。
+    pub(crate) fn set_frame_rate(&self, fps: u32) {
+        self.frame_rate.store(fps, Ordering::Relaxed);
+        let interval = capture::frame_interval_ms(fps);
+        if let Some(active) = lock(&self.active).as_ref() {
+            active
+                .counters
+                .emit_interval_ms
+                .store(interval, Ordering::Relaxed);
+        }
+    }
+
+    /// 持续监听的目标进程名（小写）。空串 = 没有目标。
+    pub(crate) fn monitor_target(&self) -> String {
+        lock(&self.monitor_target).clone()
+    }
+
+    pub(crate) fn set_monitor_target(&self, name: &str, armed: bool) {
+        *lock(&self.monitor_target) = name.trim().to_lowercase();
+        self.monitor_armed.store(armed, Ordering::Relaxed);
+    }
+
+    /// 目标一出现就自动起流吗（用户点过停止之后就不再自动起）。
+    pub(crate) fn monitor_armed(&self) -> bool {
+        self.monitor_armed.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn set_monitor_armed(&self, armed: bool) {
+        self.monitor_armed.store(armed, Ordering::Relaxed);
+    }
+
+    /// 是否正在等目标出现。返回改之前的值，调用方拿它判断"要不要打一行日志"。
+    pub(crate) fn set_monitor_waiting(&self, waiting: bool) -> bool {
+        self.monitor_waiting.swap(waiting, Ordering::Relaxed)
+    }
+
+    pub(crate) fn monitor_waiting(&self) -> bool {
+        self.monitor_waiting.load(Ordering::Relaxed)
+    }
+}
+
+/// 记住这次监听的对象：下次启动凭它自动接着听（见 [`monitor`]）。
+///
+/// 主界面、悬浮球、托盘三个入口都会走到这里，所以"上一次监听的进程"永远是最后一次
+/// 真正开始采集的那个，不区分是谁点的。
+pub(crate) fn remember_monitor_target(app: &AppHandle, state: &AppState, process_name: &str) {
+    let name = process_name.trim().to_lowercase();
+    if name.is_empty() {
+        return;
+    }
+    state.set_monitor_waiting(false);
+    if state.monitor_target() == name {
+        state.set_monitor_armed(true);
+        return;
+    }
+    state.set_monitor_target(&name, true);
+    persist_monitor_target(app, &name);
+}
+
+/// 把监听目标写回设置文件并广播（界面上的「监听对象」跟着变）。空串 = 清除目标。
+pub(crate) fn persist_monitor_target(app: &AppHandle, name: &str) {
+    let mut settings = prefs::load(app);
+    if settings.monitor_target == name {
+        return;
+    }
+    settings.monitor_target = name.to_string();
+    match prefs::store(app, &settings) {
+        Ok(()) => prefs::broadcast(app, &settings),
+        Err(err) => eprintln!("[ProcessAudioCapture] {err}"),
     }
 }
 
@@ -249,6 +363,7 @@ pub(crate) fn start_active(
         pid,
         process_name,
         wav_path.clone(),
+        state.emit_interval_ms(),
     )?;
 
     // 采集格式由内核在起流时就如实报出（capture.rs 已写进 counters），
@@ -262,6 +377,9 @@ pub(crate) fn start_active(
         wav_path,
         warnings: Vec::new(),
     };
+
+    // 起流成功 = 用户选定了监听对象：缓存下来，下次启动接着听
+    remember_monitor_target(app, state, &report.process_name);
 
     *lock(&state.active) = Some(active);
     Ok(report)
@@ -368,12 +486,108 @@ async fn stop_capture(
         return Ok(None);
     }
 
+    // 用户显式停止：把"持续监听"一起解除，否则下一轮扫描会立刻把目标又拉起来。
+    // 目标本身留着（下次启动仍会自动接着听），只是不再自动起流。
+    state.set_monitor_armed(false);
+    state.set_monitor_waiting(false);
+
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         stop_active(&app, &state, true)
     })
     .await
     .map_err(|e| format!("停止任务异常：{e}"))
+}
+
+/// 手动设置持续监听对象（传空串 = 清除）。
+///
+/// 这是"立刻生效"的：目标在跑就直接切过去采，不在跑就记下来一直等它出现
+/// （见 [`monitor::run`]）。手上的会话不管是不是同一个进程，都先停掉 —— 用户换了
+/// 监听对象，旧的那条就不再是他要的了。
+#[tauri::command]
+async fn set_monitor_target(app: AppHandle, process_name: String) -> Result<(), String> {
+    let name = process_name.trim().to_lowercase();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+
+        if name.is_empty() {
+            state.set_monitor_target("", false);
+            state.set_monitor_waiting(false);
+            persist_monitor_target(&app, "");
+            notify_capture_changed(&app, None, false, "已清除持续监听对象".to_string());
+            return Ok(());
+        }
+
+        state.set_monitor_target(&name, true);
+        persist_monitor_target(&app, &name);
+
+        let library = ensure_library(&app, &state)?;
+        let result = sessions::list_audio_windows(&library)?;
+        let (allow, block) = state.window_lists();
+        let target = filter::allowed_windows(&result.windows, &allow, &block)
+            .into_iter()
+            .find(|window| window.process_name.eq_ignore_ascii_case(&name));
+
+        match target {
+            Some(window) => {
+                if state.captured_pid() == Some(window.pid) {
+                    state.set_monitor_waiting(false);
+                    return Ok(());
+                }
+                stop_active(&app, &state, false);
+                let record_wav = state.record_wav();
+                match start_active(&app, &state, window.pid, window.process_name.clone(), record_wav)
+                {
+                    Ok(report) => {
+                        state.set_monitor_waiting(false);
+                        notify_capture_changed(
+                            &app,
+                            Some(report.pid),
+                            true,
+                            format!("已开始持续监听 {}", report.process_name),
+                        );
+                    }
+                    Err(err) => {
+                        return Err(format!("设置持续监听对象失败：{err}"));
+                    }
+                }
+            }
+            None => {
+                // 目标现在不在：先把手上那条静默停掉，进入"等待目标出现"
+                stop_active(&app, &state, false);
+                state.set_monitor_waiting(true);
+                notify_capture_changed(
+                    &app,
+                    None,
+                    false,
+                    format!("正在等待 {name} 启动，它一出现就会自动开始采集"),
+                );
+            }
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("设置监听对象异常：{e}"))?
+}
+
+/// 发一条 `pac://capture-changed`：两个窗口据此弹提示 / 记日志（与托盘的 [`tray`] 同款）。
+pub(crate) fn notify_capture_changed(
+    app: &AppHandle,
+    pid: Option<u32>,
+    switched: bool,
+    message: String,
+) {
+    println!("[ProcessAudioCapture] {message}");
+    let _ = app.emit(
+        monitor::CAPTURE_CHANGED_EVENT,
+        monitor::CaptureChanged {
+            pid: pid.unwrap_or(0),
+            process_name: String::new(),
+            switched,
+            message,
+        },
+    );
 }
 
 #[tauri::command]
@@ -398,10 +612,12 @@ pub(crate) fn persist_auto_follow(app: &AppHandle, enabled: bool) {
 }
 
 #[tauri::command]
-fn get_settings(app: AppHandle) -> Settings {
+fn get_settings(app: AppHandle, state: State<'_, AppState>) -> Settings {
     let mut settings = prefs::load(&app);
     // 本应用自己在黑名单里是锁定项：界面照着这份显示就行，不用自己再查一遍
     filter::ensure_self_blocked(&mut settings);
+    // 监听目标由状态机管（改它要起流 / 停流），以状态里的为准
+    settings.monitor_target = state.monitor_target();
     settings
 }
 
@@ -416,6 +632,9 @@ fn save_settings(
     // 四个窗口不必各算各的
     let mut settings = settings;
     filter::normalize(&mut settings);
+    // 监听目标不走这条路径：它有副作用（会起流 / 停流），只能由 `set_monitor_target` 改。
+    // 这里原样带回去，免得界面上那份旧值把状态机里的新目标盖掉。
+    settings.monitor_target = state.monitor_target();
 
     prefs::store(&app, &settings)?;
 
@@ -423,6 +642,8 @@ fn save_settings(
     state.auto_follow.store(settings.auto_follow, Ordering::Relaxed);
     state.record_wav.store(settings.record_wav, Ordering::Relaxed);
     state.set_window_lists(&settings.window_allowlist, &settings.window_blocklist);
+    // 帧率：正在跑的会话也一起换成新的推帧节奏
+    state.set_frame_rate(settings.frame_rate);
     // 锁定状态由悬停检测线程读，改完下一轮（≤25ms）就生效
     state.ball.set_locked(settings.ball_locked);
 
@@ -450,12 +671,15 @@ fn ball_window(app: &AppHandle) -> Result<WebviewWindow, String> {
 fn set_ball_visible(app: AppHandle, visible: bool) -> Result<(), String> {
     let window = ball_window(&app)?;
     if visible {
-        window.show().map_err(|e| e.to_string())
+        window.show().map_err(|e| e.to_string())?;
     } else {
         // 隐藏前先恢复穿透，免得再显示出来时挡住桌面
         let _ = window.set_ignore_cursor_events(true);
-        window.hide().map_err(|e| e.to_string())
+        window.hide().map_err(|e| e.to_string())?;
     }
+    // 只发给悬浮球自己：主界面的绘制循环不受影响
+    emit_visibility(&app, "ball", visible);
+    Ok(())
 }
 
 /// 前端上报可交互区域（球心 / 半径 / 面板矩形，窗口逻辑像素）。
@@ -508,6 +732,8 @@ fn reveal_main_window(app: &AppHandle) -> Result<(), String> {
     let _ = window.unminimize();
     window.show().map_err(|e| e.to_string())?;
     let _ = window.set_focus();
+    // 主界面重新露脸：让它把特效渲染开回来（定向事件，悬浮球那份不受影响）
+    emit_visibility(app, "main", true);
     // 主界面一露脸，托盘菜单上的"隐藏主界面"就得跟上
     tray::sync(app);
     Ok(())
@@ -574,12 +800,21 @@ pub fn run() {
         // 点 × 只是把主界面收进托盘：采集与悬浮球继续在后台跑，
         // 想彻底退出用托盘菜单里的"退出"。
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() == "main" {
+            match event {
+                // 只有主界面走这条：点 × 只是收进托盘，采集与悬浮球继续在后台跑
+                tauri::WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
                     api.prevent_close();
                     let _ = window.hide();
+                    // 藏起来之后前端没必要再画了 —— 定向通知，悬浮球那份照跑
+                    emit_visibility(window.app_handle(), "main", false);
                     tray::sync(window.app_handle());
                 }
+                // 托盘退出或窗口被系统销毁时，页面可能来不及收到 pagehide；
+                // 尽早通知前端停掉自己的渲染循环。
+                tauri::WindowEvent::Destroyed => {
+                    emit_visibility(window.app_handle(), window.label(), false);
+                }
+                _ => {}
             }
         })
         .setup(|app| {
@@ -593,7 +828,8 @@ pub fn run() {
                 }
             }
 
-            // 上次的偏好：自动跟随 / 默认录 WAV 要先进状态机，界面还没起来就得生效
+            // 上次的偏好：自动跟随 / 默认录 WAV / 帧率 / 监听缓存都要先进状态机，
+            // 界面还没起来就得生效
             {
                 let settings = prefs::load(&handle);
                 let state = app.state::<AppState>();
@@ -601,6 +837,17 @@ pub fn run() {
                 state.record_wav.store(settings.record_wav, Ordering::Relaxed);
                 state.set_window_lists(&settings.window_allowlist, &settings.window_blocklist);
                 state.ball.set_locked(settings.ball_locked);
+                state.set_frame_rate(settings.frame_rate);
+
+                // 监听缓存：上次听的是谁，这次接着听（不在线就一直等，见 [`monitor`]）
+                let cached = settings.monitor_target.trim().to_lowercase();
+                if cached.is_empty() {
+                    state.set_monitor_target("", false);
+                } else {
+                    println!("[ProcessAudioCapture] 上次监听的是 {cached}，正在恢复…");
+                    state.set_monitor_target(&cached, true);
+                    state.set_monitor_waiting(true);
+                }
             }
 
             // 悬浮球定位后显示，避免先出现在左上角再跳过去
@@ -627,6 +874,7 @@ pub fn run() {
             start_capture_best,
             stop_capture,
             set_auto_follow,
+            set_monitor_target,
             self_process_name,
             set_ball_visible,
             set_ball_geometry,

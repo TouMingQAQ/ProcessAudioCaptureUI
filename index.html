@@ -192,6 +192,16 @@
             <div class="settings-pane is-active" data-pane="general">
               <section class="set-block">
                 <div class="set-block-head">
+                  <h3 data-i18n="settings.general.frameRate">帧率上限</h3>
+                  <p data-i18n="settings.general.frameRateHint">
+                    波形、频谱与悬浮球每秒最多画多少帧。调低更省电，调高更跟手；也决定采集内核每秒推几帧数据。
+                  </p>
+                </div>
+                <div id="frame-rate-group" class="segmented" role="group"></div>
+              </section>
+
+              <section class="set-block">
+                <div class="set-block-head">
                   <h3 data-i18n="settings.general.language">语言</h3>
                   <p data-i18n="settings.general.languageHint">
                     主界面、悬浮球与托盘菜单的语言。
@@ -222,6 +232,42 @@
                 <p class="set-note" data-i18n="settings.general.recordWavHint">
                   主界面上的「顺便录成 WAV」会跟着这个开关走，文件存在「下载」目录。
                 </p>
+              </section>
+
+              <!-- 监听缓存：记住上次监听的进程，启动自动接着听 -->
+              <section class="set-block">
+                <div class="set-block-head">
+                  <h3 data-i18n="settings.general.monitor">持续监听</h3>
+                  <p data-i18n="settings.general.monitorHint">
+                    记住最近监听的进程，下次启动自动接着听；它不在（没开 / 已经退出）就一直等它出现。
+                  </p>
+                </div>
+
+                <div class="set-row">
+                  <span class="set-label" data-i18n="settings.general.monitorTarget">监听对象</span>
+                  <input
+                    id="monitor-target-input"
+                    class="input set-input"
+                    type="text"
+                    spellcheck="false"
+                    autocomplete="off"
+                    data-i18n-placeholder="settings.general.monitorPlaceholder"
+                    placeholder="进程名，如 cloudmusic.exe"
+                  />
+                  <button id="monitor-target-set" class="btn btn-ghost" type="button" data-i18n="settings.general.monitorSet">
+                    设为监听对象
+                  </button>
+                  <button id="monitor-target-clear" class="btn btn-ghost" type="button" data-i18n="settings.general.monitorClear">
+                    清除
+                  </button>
+                </div>
+
+                <div class="set-row">
+                  <button id="monitor-target-pick" class="btn btn-ghost" type="button" data-i18n="settings.general.monitorPick">
+                    用当前选中的窗口
+                  </button>
+                  <span id="monitor-target-state" class="set-value set-value-wide"></span>
+                </div>
               </section>
 
               <p class="set-note set-note-quiet" data-i18n="settings.general.trayNote">

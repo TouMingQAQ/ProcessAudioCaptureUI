@@ -18,6 +18,7 @@ import {
   type StopReport,
 } from "./api";
 import { applyI18n, t } from "./i18n";
+import { bindRenderGate } from "./render-gate";
 import { bindSettings } from "./settings";
 import { OrbVisualizer, formatDb } from "./orb";
 
@@ -44,6 +45,9 @@ const btnMain = $<HTMLButtonElement>("btn-main");
 const hint = $<HTMLParagraphElement>("hint");
 
 const visualizer = new OrbVisualizer($<HTMLCanvasElement>("orb-canvas"));
+// 小球被藏起来时把绘制循环整个停掉。这一步只作用于**悬浮球窗口**：主界面自己有一份
+// （`main.ts`），它被收进托盘时这边照常跳 —— 反过来说，这里藏球也不会冻住主界面。
+bindRenderGate((visible) => visualizer.setRendering(visible));
 const prefs = bindSettings("ball");
 
 let capturing = false;
@@ -348,6 +352,12 @@ function onTick(tick: MonitorTick) {
     }
     nowState.textContent = stateText;
     nowState.classList.toggle("is-live", live);
+  } else if (tick.waiting && tick.monitorTarget) {
+    // 持续监听的目标不在线：面板上说清楚在等谁，别只写"还没有开始采集"
+    nowTitle.textContent = t("ballWindow.waitingTitle", { name: tick.monitorTarget });
+    nowName.textContent = t("ballWindow.waitingSub");
+    nowState.textContent = t("ballWindow.idleState");
+    nowState.classList.remove("is-live");
   } else if (document.activeElement !== btnCapture) {
     nowTitle.textContent = t("ballWindow.idleTitle");
     nowName.textContent = t("ballWindow.idleSub");
@@ -468,6 +478,8 @@ async function bootstrap() {
   // 先落地主题与语言，避免默认配色闪一下再换
   const loaded = await prefs.load();
   locked = loaded.ballLocked;
+  // 帧率上限（通用设置里的那一档）——要等设置读回来才知道
+  visualizer.setFrameLimit(loaded.frameRate);
   applyLook(loaded);
   // 球摆到上次记住的位置（首次运行就是默认的右下角那一带）
   moveOrb(loaded.ballPosX, loaded.ballPosY);
@@ -497,6 +509,7 @@ async function bootstrap() {
   });
   await prefs.subscribe((next) => {
     locked = next.ballLocked;
+    visualizer.setFrameLimit(next.frameRate);
     // 刚被锁上时本地可能还开着面板：立刻收起来，别留一块点不动的面板悬在桌面上
     if (locked) applyHover(false);
     // 外观、数据源与语言都可能变：重新读一次外观，再用新语言重画当前画面

@@ -32,12 +32,27 @@ import {
   type Appearance,
 } from "./theme";
 
+/**
+ * 界面上的帧率档位（`0` = 不限）。设置面板按它排一组按钮，`normalize` 也按它收口 ——
+ * 手改坏的 settings.json 落不到中间值上。
+ */
+export const FRAME_RATE_CHOICES = [15, 30, 60, 120, 0] as const;
+/** 默认帧率上限。 */
+export const DEFAULT_FRAME_RATE = 30;
+
 export const DEFAULT_SETTINGS: Settings = {
   themeMode: "system",
   appTheme: DEFAULT_APP_THEME,
   language: "zh-CN",
   autoFollow: false,
   recordWav: false,
+
+  // 特效渲染的帧率上限：默认 30。0 = 不限（见 [`normalizeFrameRate`]）
+  frameRate: DEFAULT_FRAME_RATE,
+
+  // 持续监听的目标（进程名）。空 = 没有目标，启动时不会自动起流。
+  // 平时由后端在起流成功后回填，用户也可以手动指定。
+  monitorTarget: "",
 
   // 窗口名单：空 = 不限制。本应用自己的进程名由后端保证永远在黑名单里。
   windowAllowlist: [],
@@ -69,6 +84,18 @@ export const DEFAULT_SETTINGS: Settings = {
 function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
   const n = typeof value === "number" && Number.isFinite(value) ? value : fallback;
   return Math.min(max, Math.max(min, n));
+}
+
+/** 帧率收敛：只认那几个档位，其余一律落回默认值。 */
+function normalizeFrameRate(value: unknown): number {
+  return FRAME_RATE_CHOICES.includes(value as (typeof FRAME_RATE_CHOICES)[number])
+    ? (value as number)
+    : DEFAULT_FRAME_RATE;
+}
+
+/** 进程名收敛：去空白、统一小写。和 Rust 侧 `filter::tidy` 同一套规则。 */
+function tidyName(value: unknown): string {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
 /**
@@ -141,6 +168,9 @@ export function normalize(raw: Partial<Settings> | null | undefined): Settings {
 
   merged.windowAllowlist = tidyNames(merged.windowAllowlist);
   merged.windowBlocklist = tidyNames(merged.windowBlocklist);
+
+  merged.frameRate = normalizeFrameRate(merged.frameRate);
+  merged.monitorTarget = tidyName(merged.monitorTarget);
 
   normalizeBall(merged);
   return merged;

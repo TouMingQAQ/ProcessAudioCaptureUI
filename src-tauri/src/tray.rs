@@ -13,9 +13,8 @@ use std::sync::Mutex;
 
 use tauri::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, Wry};
+use tauri::{AppHandle, Manager, Wry};
 
-use crate::monitor::{CaptureChanged, CAPTURE_CHANGED_EVENT};
 use crate::{ensure_library, filter, monitor, sessions, start_active, stop_active, AppState};
 
 const TRAY_ID: &str = "pac-tray";
@@ -110,7 +109,15 @@ pub fn sync(app: &AppHandle) {
 
     let tooltip = match (status.process_name.as_deref(), capturing) {
         (Some(name), Some(pid)) => format!("{APP_NAME} · 正在采集 {name}（PID {pid}）"),
-        _ => format!("{APP_NAME} · 左键显示 / 隐藏主界面"),
+        _ => {
+            // 没在采但在等目标出现：提示里说清楚，否则用户会以为程序没反应
+            let target = state.monitor_target();
+            if state.monitor_waiting() && !target.is_empty() {
+                format!("{APP_NAME} · 等待 {target} 启动…")
+            } else {
+                format!("{APP_NAME} · 左键显示 / 隐藏主界面")
+            }
+        }
     };
 
     let mut last = handles.last_tooltip.lock().unwrap_or_else(|e| e.into_inner());
@@ -158,13 +165,16 @@ fn toggle_main(app: &AppHandle) {
     let visible = window.is_visible().unwrap_or(true);
     let minimized = window.is_minimized().unwrap_or(false);
 
-    if !visible || minimized {
+    let shown = !visible || minimized;
+    if shown {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
     } else {
         let _ = window.hide();
     }
+    // 藏起来 / 露出来都要告诉主界面自己 —— 定向事件，悬浮球的绘制循环不受影响
+    crate::emit_visibility(app, "main", shown);
     sync(app);
 }
 
@@ -172,11 +182,9 @@ fn toggle_ball(app: &AppHandle) {
     let Some(window) = app.get_webview_window("ball") else {
         return;
     };
-    let _ = if window.is_visible().unwrap_or(true) {
-        window.hide()
-    } else {
-        window.show()
-    };
+    let shown = !window.is_visible().unwrap_or(true);
+    let _ = if shown { window.show() } else { window.hide() };
+    crate::emit_visibility(app, "ball", shown);
     sync(app);
 }
 
@@ -205,6 +213,10 @@ fn toggle_capture(app: &AppHandle) {
 
         // 已有会话就先停，再点一次才会重新开始
         if state.captured_pid().is_some() {
+            // 和主界面、悬浮球的"停止"一个口径：停下来的同时解除持续监听，
+            // 免得下一轮扫描又把目标拉起来
+            state.set_monitor_armed(false);
+            state.set_monitor_waiting(false);
             stop_active(&app, &state, true);
             return;
         }
@@ -259,15 +271,5 @@ fn toggle_capture(app: &AppHandle) {
 
 /// 把托盘操作的结果播给两个窗口（悬浮球弹提示、主界面记日志）。
 fn notify(app: &AppHandle, pid: Option<u32>, switched: bool, message: impl Into<String>) {
-    let message = message.into();
-    println!("[ProcessAudioCapture] {message}");
-    let _ = app.emit(
-        CAPTURE_CHANGED_EVENT,
-        CaptureChanged {
-            pid: pid.unwrap_or(0),
-            process_name: String::new(),
-            switched,
-            message,
-        },
-    );
+    crate::notify_capture_changed(app, pid, switched, message.into());
 }

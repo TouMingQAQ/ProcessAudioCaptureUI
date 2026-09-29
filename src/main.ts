@@ -16,6 +16,7 @@ import {
   type StopReport,
 } from "./api";
 import { applyI18n, t } from "./i18n";
+import { bindRenderGate } from "./render-gate";
 import { bindSettings } from "./settings";
 import { createSettingsPanel, type SettingsPanel } from "./settings-panel";
 import { Visualizer, formatDb } from "./visualizer";
@@ -56,6 +57,20 @@ const visualizer = new Visualizer(
   $<HTMLCanvasElement>("canvas-wave"),
   $<HTMLCanvasElement>("canvas-spectrum"),
 );
+document.documentElement.dataset.capture = "idle";
+
+/**
+ * 本窗口现在可不可见（后端定向事件 + 文档可见性合成，见 `render-gate.ts`）。
+ *
+ * 隐藏时顺手把"每 5 秒刷一次窗口列表"也停掉 —— 收进托盘之后没人看那份列表。
+ */
+let renderVisible = true;
+// 主界面被收进托盘（点 × 只是隐藏，进程还在）时，波形 / 频谱的绘制循环整个停掉。
+// 这一步只作用于本窗口：悬浮球有自己的一份（`ball.ts`），主界面藏起来它照常跳。
+bindRenderGate((visible) => {
+  renderVisible = visible;
+  visualizer.setRendering(visible);
+});
 
 /* ------------------------------------------------------------------- 状态 */
 
@@ -71,8 +86,16 @@ let capturingPid: number | null = null;
 let autoFollow = false;
 let ballVisible = true;
 /** 当前会话状态（文案跟着语言变，所以要记住键而不是记住字符串）。 */
-let sessionKey: "session.idle" | "session.live" | "session.failed" = "session.idle";
+let sessionKey: "session.idle" | "session.live" | "session.failed" | "session.waiting" =
+  "session.idle";
 let sessionCls = "pill-idle";
+/**
+ * 持续监听的目标不在线、正在等它出现时的目标进程名（不在等待中则为 `null`）。
+ *
+ * 它和"采集会话"是两码事：会话没起来，但界面得说清楚"在等谁"，不然用户看到的只是
+ * 一个安静的"未采集"。
+ */
+let waitingTarget: string | null = null;
 
 /* ------------------------------------------------------------------- 日志 */
 
@@ -321,6 +344,8 @@ async function startCapture() {
   try {
     const report = await api.startCapture(selectedPid, win?.processName ?? "", recordWav.checked);
     capturingPid = report.pid;
+    visualizer.setActive(true);
+    document.documentElement.dataset.capture = "live";
     visualizer.reset();
     setSessionState("session.live", "pill-live");
     btnCapture.textContent = t("view.stop");
@@ -361,6 +386,8 @@ async function stopCapture() {
 /** 把"正在采集"那套界面复位。自己停的、别处（悬浮球 / 托盘）停的，都走这里。 */
 function resetCaptureUi() {
   capturingPid = null;
+  visualizer.setActive(false);
+  document.documentElement.dataset.capture = "idle";
   setSessionState("session.idle", "pill-idle");
   btnCapture.textContent = t("view.capture");
   btnCapture.classList.add("btn-primary");
@@ -379,6 +406,8 @@ function resetCaptureUi() {
  * 每秒的扫描 tick 里也带着同样的字段，哪边先到就用哪边。
  */
 function adoptCaptureState(active: boolean, pid: number | null, name: string | null) {
+  visualizer.setActive(active);
+  document.documentElement.dataset.capture = active ? "live" : "idle";
   if (active === (capturingPid !== null)) return;
 
   if (!active) {
@@ -479,6 +508,18 @@ function applyTick(tick: MonitorTick) {
   // 悬浮球或托盘开关过采集时，主界面得跟上 —— 这是两个窗口之间唯一的同步途径
   adoptCaptureState(tick.active, tick.pid, tick.capturing?.processName ?? null);
 
+  // 设置面板里的「持续监听」状态（正在监听 / 等待目标）跟着扫描走
+  panel?.syncMonitor(tick);
+
+  // 持续监听的目标不在线：界面明说在等谁，别停在"未采集"上
+  if (tick.waiting && capturingPid === null && tick.monitorTarget) {
+    waitingTarget = tick.monitorTarget;
+    setSessionState("session.waiting", "pill-wait");
+    renderWaiting();
+    return;
+  }
+  waitingTarget = null;
+
   if (!tick.active || capturingPid === null) return;
 
   const name = tick.capturing?.processName ?? tick.processName ?? t("list.unknownProcess");
@@ -499,6 +540,15 @@ function applyTick(tick: MonitorTick) {
   }
 }
 
+/** 「正在等目标出现」那套文案（主标题那两行）。 */
+function renderWaiting() {
+  const target = waitingTarget ?? "";
+  const titleEl = nowCapturing.querySelector(".nc-title");
+  const subEl = nowCapturing.querySelector(".nc-sub");
+  if (titleEl) titleEl.textContent = t("view.waitingTitle", { name: target });
+  if (subEl) subEl.textContent = t("view.waitingSub");
+}
+
 /** 语言变化后，把动态生成过的文案全部重刷一遍。 */
 function refreshTexts() {
   applyI18n();
@@ -511,6 +561,8 @@ function refreshTexts() {
   specMeta.textContent = t("view.metaSpec", { n: 128 });
   renderWindowList();
   renderSelected();
+  // 在等目标时，"还没选择窗口"那句是不对的，盖回等待文案
+  if (waitingTarget) renderWaiting();
 }
 
 async function bootstrap() {
@@ -518,6 +570,8 @@ async function bootstrap() {
   settings = await prefs.load();
   // 画布是在模块顶层就建好的（那会儿主题还没读回来），这里按刚生效的主题补取一次色
   visualizer.refreshTheme();
+  // 帧率上限也要等设置读回来才知道，先按它限一次
+  visualizer.setFrameLimit(settings.frameRate);
   // 本应用的进程名：列表过滤要用它，设置面板里那条锁定项也靠它认出来
   await loadSelfName();
 
@@ -525,6 +579,9 @@ async function bootstrap() {
     prefs,
     reloadKernel: () => api.reloadDll(),
     log: (message, kind) => log(message, kind),
+    // 「用当前选中的窗口」按钮：把左侧列表里选中的那个交给设置面板
+    selectedProcess: () => allWindows.find((win) => win.pid === selectedPid)?.processName ?? null,
+    setMonitorTarget: (processName) => api.setMonitorTarget(processName),
   });
 
   visualizer.onRender = updateMeters;
@@ -569,6 +626,7 @@ async function bootstrap() {
       settings = next;
       // 换了语言要把所有文案重刷，换了主题要重新读一次画布颜色
       visualizer.refreshTheme();
+      visualizer.setFrameLimit(next.frameRate);
       recordWav.checked = next.recordWav;
       followMain.checked = next.autoFollow;
       autoFollow = next.autoFollow;
@@ -637,9 +695,9 @@ async function bootstrap() {
   await refreshDllStatus(false);
   await refreshWindows();
 
-  // 有音频会话的窗口会不断变化，周期性刷新列表
+  // 有音频会话的窗口会不断变化，周期性刷新列表（收进托盘之后就不刷了）
   window.setInterval(() => {
-    if (capturingPid === null && document.visibilityState === "visible") {
+    if (capturingPid === null && renderVisible) {
       void refreshWindows();
     }
   }, 5000);

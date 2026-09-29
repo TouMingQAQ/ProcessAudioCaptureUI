@@ -26,19 +26,48 @@ pub const AUDIO_EVENT: &str = "pac://audio-frame";
 /// 会话结束事件（DLL 侧异常中断 / 手动停止）。
 pub const STOPPED_EVENT: &str = "pac://stopped";
 
-/// 事件推送节奏（毫秒）。20ms ≈ 50fps。
+/// 事件推送的默认节奏（毫秒）。20ms ≈ 50fps，也是"帧率不限"时的节奏。
 const EMIT_INTERVAL_MS: u64 = 20;
+/// 推帧间隔的下限 / 上限（毫秒）：最快 250fps，最慢 10fps。
+const MIN_EMIT_INTERVAL_MS: u32 = 4;
+const MAX_EMIT_INTERVAL_MS: u32 = 100;
 /// 环形缓冲上限：约 1 秒 @48kHz 立体声，超了丢最旧的数据。
 const MAX_BUFFERED_SAMPLES: usize = 48_000 * 2;
 
+/// 帧率上限（0 = 不限）→ 推帧间隔（毫秒）。
+///
+/// 界面上的「帧率上限」是同一个数管两头：前端按它限绘制，这里按它限推帧 ——
+/// 光限绘制的话，事件里那 700 多个数字照样每秒被解析几十次。
+pub fn frame_interval_ms(fps: u32) -> u32 {
+    if fps == 0 {
+        EMIT_INTERVAL_MS as u32
+    } else {
+        (1000 / fps.max(1)).clamp(MIN_EMIT_INTERVAL_MS, MAX_EMIT_INTERVAL_MS)
+    }
+}
+
 /// 跨线程共享的会话计数器。
-#[derive(Default)]
 pub struct SharedCounters {
     pub sample_rate: AtomicU32,
     pub channels: AtomicU32,
     pub total_frames: AtomicU64,
     /// 因为缓冲溢出被丢弃的采样数，用于 UI 提示。
     pub dropped_samples: AtomicU64,
+    /// 推帧间隔（毫秒）。会话跑着的时候改帧率也能立刻生效，所以每轮都读一次。
+    pub emit_interval_ms: AtomicU32,
+}
+
+impl Default for SharedCounters {
+    fn default() -> Self {
+        Self {
+            sample_rate: AtomicU32::new(0),
+            channels: AtomicU32::new(0),
+            total_frames: AtomicU64::new(0),
+            dropped_samples: AtomicU64::new(0),
+            // 默认就是原来的 50fps；真正的值在起流时按设置写进来
+            emit_interval_ms: AtomicU32::new(EMIT_INTERVAL_MS as u32),
+        }
+    }
 }
 
 /// 传给 DLL 回调的上下文。通过 `Box::into_raw` 固定地址后交给 C 侧。
@@ -160,14 +189,20 @@ pub struct StartReport {
 }
 
 /// 以阻塞方式启动一个采集会话。**必须在阻塞线程池里调用**（`pac_start_capture` 最多阻塞 10 秒）。
+///
+/// `emit_interval_ms` 是推帧间隔，由界面的「帧率上限」换算而来（见 [`frame_interval_ms`]）。
 pub fn start_capture(
     app: AppHandle,
     lib: Arc<PacLibrary>,
     pid: u32,
     process_name: String,
     wav_path: Option<PathBuf>,
+    emit_interval_ms: u32,
 ) -> Result<ActiveCapture, String> {
     let counters = Arc::new(SharedCounters::default());
+    counters
+        .emit_interval_ms
+        .store(emit_interval_ms, Ordering::Relaxed);
     let queue: Arc<Mutex<VecDeque<f32>>> = Arc::new(Mutex::new(VecDeque::with_capacity(MAX_BUFFERED_SAMPLES)));
     let stop_flag = Arc::new(AtomicBool::new(false));
 
@@ -314,6 +349,9 @@ fn spawn_emitter(
             let mut last_emit = Instant::now();
 
             loop {
+                // 间隔来自可变的帧率设置：每轮重新读，会话跑着改帧率也能立刻生效
+                let interval = emit_interval(&counters);
+
                 // 1. 把缓冲里的数据搬到本地
                 let drained: usize = {
                     let mut guard = lock(&queue);
@@ -357,7 +395,7 @@ fn spawn_emitter(
                 }
 
                 // 2. 到点了就推一帧
-                if last_emit.elapsed() >= Duration::from_millis(EMIT_INTERVAL_MS) {
+                if last_emit.elapsed() >= Duration::from_millis(interval as u64) {
                     let frames = pending.len() / channels;
                     match analyzer.analyze(&pending, frames) {
                         Ok(frame) => {
@@ -428,4 +466,14 @@ struct FrameEnvelope {
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// 当前会话该用的推帧间隔（毫秒）。写坏了（0 或极端值）也有兜底，不会把发射线程跑飞。
+fn emit_interval(counters: &SharedCounters) -> u32 {
+    let stored = counters.emit_interval_ms.load(Ordering::Relaxed);
+    if stored == 0 {
+        EMIT_INTERVAL_MS as u32
+    } else {
+        stored.clamp(MIN_EMIT_INTERVAL_MS, MAX_EMIT_INTERVAL_MS)
+    }
 }

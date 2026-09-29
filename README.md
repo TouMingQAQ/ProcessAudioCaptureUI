@@ -24,6 +24,8 @@ Windows 桌面工具：按**进程**（而不是整块声卡）截取音频，�
 | **样式与配色分离** | 悬浮球分两个独立维度：**律动样式**只管形状（六种，见下），**配色主题**只管颜色（十一种）。任意组合 |
 | **两种律动数据** | 小球可以跟着 **128 柱对数频谱** 跳，也可以跟着 **256 点峰谷包络波形** 跳，或者让程序每帧自适应挑更活跃的那份 |
 | **系统托盘** | 左键显示 / 隐藏主界面；右键菜单复用悬浮球的功能 |
+| **监听缓存** | 记住最近监听的进程，下次启动自动接着听；它不在（没开 / 已退出）就一直等它出现。也可以手动指定持续监听对象 |
+| **帧率上限** | 波形 / 频谱 / 悬浮球每秒最多画多少帧（默认 30，可关掉限制），同一个数也决定内核每秒推几帧 |
 | **自动跟随** | 当前源安静下来、另一个程序开始出声时，自动把采集切过去（带连续确认，避免抖动） |
 | **媒体信息** | 曲名 / 歌手 / 播放状态取自系统媒体控件（SMTC）—— 也就是媒体键、音量面板上显示的那份数据 |
 | **录制** | 可选把捕获到的音频同时存成 16-bit PCM WAV |
@@ -99,7 +101,7 @@ Windows 桌面工具：按**进程**（而不是整块声卡）截取音频，�
 | `pac.rs` | 动态加载内核、绑定 15 个导出符号，并把 C 结构整份拷成 Rust 数据 |
 | `sessions.rs` | 调 `pac_enum_targets`，把内核条目转成前端要的结构 |
 | `dsp.rs` | 调 `pac_analyzer_*`，把一帧分析结果转成事件载荷 |
-| `capture.rs` | 一次采集会话：回调缓冲队列、发射线程（每 20 ms 出帧）、WAV 落盘 |
+| `capture.rs` | 一次采集会话：回调缓冲队列、发射线程（按帧率上限出帧，默认 50 fps）、WAV 落盘 |
 | `monitor.rs` | 后台每 1.2 s 扫一次：刷新采集源信息、驱动自动跟随、同步托盘菜单、发现异常中断 |
 | `tray.rs` | 系统托盘图标与右键功能菜单 |
 | `wav.rs` | 16-bit PCM WAV 写入（先写占位头，结束时回填尺寸） |
@@ -148,6 +150,7 @@ ProcessAudioCaptrueUI/
 │   ├── ball-render.ts          # 小球绘制（纯函数：六种样式，实时与预览共用）
 │   ├── orb.ts                  # 悬浮球实时循环（平滑、空闲衰减、数据源切换）
 │   ├── visualizer.ts           # 主界面 Canvas 波形 + 频谱 + 电平表渲染
+│   ├── render-gate.ts          # 「这个窗口该不该画」：定向可见性事件 + 文档可见性 → 停 / 开绘制循环
 │   ├── api.ts                  # 与 Rust 命令、事件的类型化封装
 │   ├── theme.ts                # 应用主题 + 悬浮球配色（色板 → CSS 变量）
 │   ├── settings.ts             # 界面偏好的前端状态（读 / 改 / 广播）
@@ -183,6 +186,7 @@ ProcessAudioCaptrueUI/
 | `stop_capture()` | 停止采集，返回帧数 / 时长 / WAV 路径 / 丢帧统计 |
 | `capture_status()` | 当前采集状态（供悬浮球同步 UI） |
 | `set_auto_follow(enabled)` | 自动跟随开关 |
+| `set_monitor_target(processName)` | 设置 / 清除持续监听对象（空串 = 清除）：目标在跑就切过去采，不在跑就等它 |
 | `set_ball_visible(visible)` / `set_ball_expanded(expanded)` | 悬浮球显示隐藏 / 展开收起 |
 | `show_main_window()` | 唤起主窗口 |
 
@@ -191,8 +195,9 @@ ProcessAudioCaptrueUI/
 | `pac://audio-frame` | `{ pid, totalFrames, elapsedMs, waveform[512], spectrum[128], rms, peak, windowMs }` |
 | `pac://stopped` | `StopReport` |
 | `pac://error` | `string` |
-| `pac://monitor` | `MonitorTick`：每 1.2 s 广播一次采集源信息（标题 / 状态 / 峰值 / 媒体信息）与候选源 |
-| `pac://capture-changed` | `CaptureChanged`：自动跟随切换、托盘快捷操作、异常中断的结果提示 |
+| `pac://monitor` | `MonitorTick`：每 1.2 s 广播一次采集源信息（标题 / 状态 / 峰值 / 媒体信息）、候选源，以及持续监听的目标与"是否在等它出现" |
+| `pac://capture-changed` | `CaptureChanged`：自动跟随切换、托盘快捷操作、持续监听起流、异常中断的结果提示 |
+| `pac://window-visibility:<label>` | `{ visible }`：窗口藏起来 / 露出来了（`main` / `ball` 各一条，定向投递）。名字按窗口分开是必须的：Tauri 的定向事件对没指定 `target` 的监听者（`listen()` 的默认 `Any`）并不隔离 |
 
 `waveform` 是 256 组 `(min, max)` 对，`spectrum` 是 20 Hz → Nyquist 的 128 个对数频率柱，两者都由内核算出。
 悬浮球两种都能用：样式里声明自己读哪一份（见「小球读哪一份数据」），不用改 Rust 侧。
@@ -207,6 +212,27 @@ ProcessAudioCaptrueUI/
 | `ballTheme` | 悬浮球**配色** id（`theme.ts` 的 `BALL_THEMES`） |
 | `ballStyle` | 悬浮球**律动样式** id（`ball-style.ts` 的 `BALL_STYLES`） |
 | `ballSource` | 小球读哪份数据：`spectrum` / `wave` / `adaptive` |
+
+另外两项不在悬浮球名下，但两个窗口都吃：
+
+| 字段 | 含义 |
+| --- | --- |
+| `frameRate` | 特效帧率上限（`15` / `30` / `60` / `120` / `0` 不限，默认 `30`）：两个窗口的绘制循环按它限帧，采集内核的推帧间隔也由它换算（`capture::frame_interval_ms`） |
+| `monitorTarget` | 持续监听的目标进程名（小写）；空串 = 没有目标。**它不跟普通设置一起走 `save_settings`** —— 改它有副作用（起流 / 停流），只能走 `set_monitor_target`，`get_settings` / `save_settings` 都以状态机里的值为准 |
+
+### 监听缓存：关掉再开还接着听
+
+每次成功起流（主界面、悬浮球、托盘、自动跟随、自动恢复，哪条路都一样）都会把那个进程名
+记进 `monitorTarget`。于是：
+
+1. 启动时若 `monitorTarget` 非空，后台扫描线程会去找它：在跑就直接开始采集；
+2. 不在跑就一直等（`MonitorTick.waiting` 为 `true`，主界面显示「等待 xxx 启动…」，托盘提示
+   也跟着变），进程一出现立刻起流；
+3. 用户点「停止采集」只是解除自动起流（`monitor_armed = false`），目标仍记着 —— 不会刚停下
+   又被拉起来；下次启动还是会接着听；
+4. 想换目标：设置 →「通用 → 持续监听」里填进程名，或用「用当前选中的窗口」；清除则填空。
+
+起流失败（比如目标被独占）会退避约 10 秒再试，不会每 1.2 秒重拉一次。
 
 旧版本写下的 `settings.json` 缺这几个字段时会落回默认值（`solid` / `ring` / `adaptive`），
 读进来之前还会做一次收敛：像「柱阵」这种只认频谱的样式，不会被留下 `wave` 这种画不出来的组合。
@@ -232,6 +258,10 @@ ProcessAudioCaptrueUI/
 
 > 主界面点 × **不会退出程序**，只是收进托盘 —— 采集与悬浮球继续在后台运行。
 > 要彻底退出请用托盘菜单里的「退出」。
+>
+> 藏起来的那一个窗口会**停掉自己的特效渲染**（主界面停了波形 / 频谱的绘制循环，悬浮球停了
+> 小球的绘制循环），露出来再接着跑。这件事按窗口各管各的：主界面收进托盘不会把悬浮球冻住，
+> 反过来也一样 —— 后端用 `emit_to` 定向通知，而不是广播。
 
 ## 构建与运行
 

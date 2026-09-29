@@ -341,6 +341,10 @@ html[data-ball-outer="wave"] .orb {
   animation: blink 1.6s ease-in-out infinite;
 }
 
+html[data-rendering="hidden"] .candidate-dot {
+  animation-play-state: paused;
+}
+
 @keyframes blink {
   0%,
   100% {

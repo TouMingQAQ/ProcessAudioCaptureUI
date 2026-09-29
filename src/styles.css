@@ -82,6 +82,12 @@ body {
   animation: twinkle 4.5s ease-in-out infinite;
 }
 
+/* 背景装饰不承载交互；待机或窗口不可见时冻结，避免持续触发合成。 */
+html[data-capture="idle"] .sparkle,
+html[data-rendering="hidden"] .sparkle {
+  animation-play-state: paused;
+}
+
 .sparkle-a {
   top: 86px;
   left: 46%;
@@ -233,6 +239,13 @@ body {
   color: var(--ui-danger);
   border-color: var(--ui-danger);
   background: var(--ui-danger-soft);
+}
+
+/* 持续监听：目标还没出现，正在等 —— 不是出错，所以用 warn 那一档 */
+.pill-wait {
+  color: var(--ui-warn);
+  border-color: var(--ui-warn);
+  background: var(--ui-warn-soft);
 }
 
 .btn {
@@ -1487,6 +1500,30 @@ body {
   text-align: right;
   font-size: 11.5px;
   color: var(--ui-text-dim);
+}
+
+/* 设置行里的文本输入：`.input` 本身是 100% 宽，在 flex 行里得改成"吃掉剩余空间" */
+.set-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 「监听对象」那行的状态文字：靠左、可以长（"等待 xxx 启动…"） */
+.set-value-wide {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-align: left;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.set-value-wide[data-state="waiting"] {
+  color: var(--ui-warn);
+}
+
+.set-value-wide[data-state="active"] {
+  color: var(--ui-ok);
 }
 
 .slider {

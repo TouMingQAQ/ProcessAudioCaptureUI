@@ -29,6 +29,18 @@ pub struct Settings {
     pub auto_follow: bool,
     /// 采集时是否默认录制 WAV。
     pub record_wav: bool,
+    /// 特效渲染的帧率上限（见 `capture::frame_interval_ms`）。`0` = 不限制。
+    ///
+    /// 它同时管两头：两个窗口的绘制循环按它限帧，采集内核的推帧节奏也按它放慢 ——
+    /// 只限绘制的话，事件里那 700 多个数字照样每秒解析几十次。
+    pub frame_rate: u32,
+
+    /* --------------------------------------------------------- 监听缓存 */
+    /// 持续监听的目标进程名（小写，带扩展名）。空 = 没有目标。
+    ///
+    /// 每次成功起流都会刷新成那一次的进程，下次启动就凭它自动接着听；
+    /// 目标不在线时不会放弃，一直等它出现（见 `monitor`）。
+    pub monitor_target: String,
 
     /* --------------------------------------------------------- 窗口名单 */
     /// 窗口检测白名单（进程名，小写）。**空数组 = 不限制**：除黑名单外都能被检测到；
@@ -90,6 +102,9 @@ impl Default for Settings {
             language: "zh-CN".to_string(),
             auto_follow: false,
             record_wav: false,
+            frame_rate: 30,
+
+            monitor_target: String::new(),
 
             window_allowlist: Vec::new(),
             window_blocklist: Vec::new(),

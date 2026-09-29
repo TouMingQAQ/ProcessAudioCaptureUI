@@ -37,6 +37,8 @@ const BANDS = 84;
 
 /** 基准尺寸（CSS 像素）：`ballSize` 是相对它的倍率。 */
 const BASE_SIZE = 96;
+const MAX_RENDER_DPR = 1.5;
+const IDLE_FRAME_LIMIT = 10;
 
 /** 低频能量的取样柱数：对数频谱最前面几柱，鼓点主要落在这里。 */
 const LOW_BINS = 8;
@@ -87,6 +89,10 @@ export class OrbVisualizer {
   private lastFrameAt = 0;
   private lastPushAt = 0;
   private lastDrawAt = 0;
+  /** 帧率上限（0 = 不限）。 */
+  private frameLimit = 30;
+  /** 悬浮球窗口藏起来时整个循环停掉（省电），露出来再接着跑。 */
+  private rendering = true;
   /** 这一层是不是波形包络驱动的（示波样式要靠它决定画不画镜像线）。 */
   private innerWaveDriven = false;
   private outerWaveDriven = false;
@@ -139,7 +145,33 @@ export class OrbVisualizer {
 
   /** 是否有正在进行的采集（决定小球是"活"的还是待机的）。 */
   setActive(active: boolean) {
+    if (this.active === active) return;
     this.active = active;
+    this.lastDrawAt = 0;
+    if (this.rendering && this.raf === 0) this.raf = requestAnimationFrame(this.loop);
+  }
+
+  /**
+   * 帧率上限（0 = 不限）。
+   *
+   * 悬浮球是**常驻置顶**的一层窗口，帧率限制在它身上最省电：一圈柱 + 外发光每秒少画
+   * 几十次，眼睛基本看不出来。
+   */
+  setFrameLimit(fps: number) {
+    this.frameLimit = Math.max(0, fps);
+  }
+
+  /** 窗口可见性变化：藏起来就停掉绘制循环，露出来再跑。 */
+  setRendering(enabled: boolean) {
+    if (this.rendering === enabled) return;
+    this.rendering = enabled;
+    if (enabled) {
+      this.lastDrawAt = 0;
+      if (this.raf === 0) this.raf = requestAnimationFrame(this.loop);
+    } else {
+      cancelAnimationFrame(this.raf);
+      this.raf = 0;
+    }
   }
 
   push(frame: AudioFrameEvent) {
@@ -148,7 +180,10 @@ export class OrbVisualizer {
     const first = this.lastPushAt === 0;
     this.lastPushAt = now;
     this.lastFrameAt = now;
-    this.active = true;
+    if (!this.active) {
+      this.active = true;
+      this.lastDrawAt = 0;
+    }
 
     const smooth = first ? 1 : 0.55;
     this.innerWaveDriven = fillBands(this.scratch, frame, this.innerSource, this.gain);
@@ -165,6 +200,7 @@ export class OrbVisualizer {
   /** 采集停止后让小球慢慢回到待机。 */
   relax() {
     this.active = false;
+    this.lastDrawAt = 0;
     this.rms = 0;
     this.peak = 0;
     this.low = 0;
@@ -177,12 +213,23 @@ export class OrbVisualizer {
 
   dispose() {
     cancelAnimationFrame(this.raf);
+    this.raf = 0;
   }
 
   private loop() {
+    if (!this.rendering) {
+      this.raf = 0;
+      return;
+    }
     this.raf = requestAnimationFrame(this.loop);
+
     const now = performance.now();
-    const stale = now - this.lastFrameAt > 420;
+    const fps = this.active ? this.frameLimit : IDLE_FRAME_LIMIT;
+    const interval = fps > 0 ? 1000 / fps : 0;
+    // 还没到下一帧：这次 rAF 空转过去（留 0.5ms 余量，躲开浮点误差）
+    if (interval > 0 && this.lastDrawAt !== 0 && now - this.lastDrawAt < interval - 0.5) return;
+
+    const stale = now - this.lastFrameAt > Math.max(420, interval + 120);
     this.draw(now, stale);
     this.onRender(stale ? 0 : this.rms, stale ? 0 : this.peak);
   }
@@ -213,7 +260,7 @@ export class OrbVisualizer {
       this.colors,
       frame,
       this.size,
-      Math.min(window.devicePixelRatio || 1, 2),
+      Math.min(window.devicePixelRatio || 1, MAX_RENDER_DPR),
     );
   }
 

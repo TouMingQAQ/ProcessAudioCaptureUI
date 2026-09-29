@@ -20,7 +20,7 @@
  * 样式名字与说明都按 id 去 `i18n.ts` 取（`ballStyle.<id>`），样式表里不再各写一份中英文。
  */
 
-import type { DllStatus, Settings } from "./api";
+import type { DllStatus, MonitorTick, Settings } from "./api";
 import type { BallDataSource, BallStyle } from "./ball-style";
 import { renderStylePreview } from "./ball-render";
 import {
@@ -29,7 +29,7 @@ import {
   DEFAULT_BALL_PULSE_AMOUNT,
 } from "./ball-pulse";
 import { bi, t } from "./i18n";
-import type { SettingsBinding } from "./settings";
+import { FRAME_RATE_CHOICES, type SettingsBinding } from "./settings";
 import { getSelfName } from "./window-list";
 import {
   APP_THEMES,
@@ -237,6 +237,14 @@ export interface SettingsPanelOptions {
   reloadKernel: () => Promise<DllStatus>;
   /** 想往主界面日志里写一行就调它。 */
   log?: (message: string, kind?: "info" | "warn" | "error") => void;
+  /**
+   * 主界面当前选中的窗口的进程名（没选中时返回 `null`）。
+   *
+   * 「持续监听」那一栏拿它做"用当前选中的窗口"按钮 —— 让用户不必手打进程名。
+   */
+  selectedProcess?: () => string | null;
+  /** 手动设置 / 清除持续监听对象（走 `set_monitor_target`，有起流 / 停流的副作用）。 */
+  setMonitorTarget?: (processName: string) => Promise<void>;
 }
 
 export interface SettingsPanel {
@@ -248,20 +256,28 @@ export interface SettingsPanel {
   sync(settings: Settings): void;
   /** 把内核状态渲染到「内核」tab。 */
   syncKernel(status: DllStatus | null): void;
+  /** 每次扫描 tick 同步「持续监听」的状态（正在监听 / 等待目标出现）。 */
+  syncMonitor(tick: MonitorTick | null): void;
   /** 语言变化后重刷所有文案（含主题卡片里的名字）。 */
   relang(settings: Settings): void;
 }
 
 export function createSettingsPanel(options: SettingsPanelOptions): SettingsPanel {
-  const { prefs, reloadKernel, log } = options;
+  const { prefs, reloadKernel, log, selectedProcess, setMonitorTarget } = options;
 
   const overlay = $<HTMLDivElement>("settings");
   const scrim = $<HTMLDivElement>("settings-scrim");
   const closeBtn = $<HTMLButtonElement>("settings-close");
   const modeGroup = $<HTMLDivElement>("theme-mode-group");
   const langGroup = $<HTMLDivElement>("language-group");
+  const frameRateGroup = $<HTMLDivElement>("frame-rate-group");
   const autoFollowBox = $<HTMLInputElement>("set-auto-follow");
   const recordWavBox = $<HTMLInputElement>("set-record-wav");
+  const monitorInput = $<HTMLInputElement>("monitor-target-input");
+  const monitorSetBtn = $<HTMLButtonElement>("monitor-target-set");
+  const monitorClearBtn = $<HTMLButtonElement>("monitor-target-clear");
+  const monitorPickBtn = $<HTMLButtonElement>("monitor-target-pick");
+  const monitorState = $<HTMLSpanElement>("monitor-target-state");
   const appGrid = $<HTMLDivElement>("app-theme-grid");
   const resetBtn = $<HTMLButtonElement>("theme-reset");
   const reloadBtn = $<HTMLButtonElement>("btn-kernel-reload");
@@ -306,6 +322,10 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
 
   let settings: Settings = prefs.get();
   let opened = false;
+  /** 最近一次扫描 tick：用来知道"持续监听"现在是在等目标还是正在采。 */
+  let lastTick: MonitorTick | null = null;
+  /** 正在写监听对象：三个按钮先禁掉，免得连点。 */
+  let monitorBusy = false;
 
   /* ---------------------------------------------------------- 折叠区块 */
 
@@ -337,6 +357,90 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
       );
     }
     appGrid.replaceChildren(frag);
+  }
+
+  /* ------------------------------------------------------------ 帧率上限 */
+
+  /** 帧率档位按钮：`0` 显示成「不限」。 */
+  function renderFrameRates() {
+    const frag = document.createDocumentFragment();
+    for (const fps of FRAME_RATE_CHOICES) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "seg";
+      btn.dataset.fps = String(fps);
+      btn.textContent =
+        fps === 0
+          ? t("settings.general.frameRateUnlimited")
+          : t("settings.general.frameRateUnit", { fps });
+      const active = fps === settings.frameRate;
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-pressed", String(active));
+      btn.addEventListener("click", () => void prefs.patch({ frameRate: fps }));
+      frag.append(btn);
+    }
+    frameRateGroup.replaceChildren(frag);
+  }
+
+  /* ---------------------------------------------------------- 持续监听 */
+
+  /** 当前该显示哪一句状态：没目标 / 在等目标 / 正在采目标 / 记住了但没采。 */
+  function renderMonitorState() {
+    const target = settings.monitorTarget;
+    if (!target) {
+      monitorState.textContent = t("settings.general.monitorNone");
+      monitorState.dataset.state = "none";
+      return;
+    }
+    if (lastTick?.waiting) {
+      monitorState.textContent = t("settings.general.monitorWaiting", { name: target });
+      monitorState.dataset.state = "waiting";
+      return;
+    }
+    if (lastTick?.active) {
+      monitorState.textContent = t("settings.general.monitorActive", { name: target });
+      monitorState.dataset.state = "active";
+      return;
+    }
+    // 目标记着、手上却没在采：用户点过停止就是这种状态，别写成"正在监听"
+    monitorState.textContent = t("settings.general.monitorRemembered", { name: target });
+    monitorState.dataset.state = "none";
+  }
+
+  function renderMonitor() {
+    // 别在用户打字的时候把输入框覆盖掉
+    if (document.activeElement !== monitorInput) monitorInput.value = settings.monitorTarget;
+    monitorSetBtn.disabled = monitorBusy;
+    monitorClearBtn.disabled = monitorBusy || settings.monitorTarget === "";
+    monitorPickBtn.disabled = monitorBusy;
+    renderMonitorState();
+  }
+
+  /**
+   * 设置 / 清除持续监听对象。
+   *
+   * 走的是专用命令而不是 `prefs.patch`：它有副作用（目标在跑就切过去采，不在跑就等），
+   * 前端只要把用户填的进程名交出去就行，其余由后端定夺。
+   */
+  async function applyMonitorTarget(name: string) {
+    if (!setMonitorTarget) return;
+    monitorBusy = true;
+    renderMonitor();
+    try {
+      const target = name.trim().toLowerCase();
+      await setMonitorTarget(target);
+      // 只说"设好了"：到底是立刻在采还是在等它出现，由后端算，界面按 tick 显示
+      log?.(
+        target
+          ? t("settings.general.monitorSetLog", { name: target })
+          : t("settings.general.monitorCleared"),
+      );
+    } catch (err) {
+      log?.(t("settings.general.monitorFailed", { err: String(err) }), "error");
+    } finally {
+      monitorBusy = false;
+      renderMonitor();
+    }
   }
 
   /* ------------------------------------------------------------ 悬浮球配色 */
@@ -619,6 +723,8 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
     autoFollowBox.checked = settings.autoFollow;
     recordWavBox.checked = settings.recordWav;
 
+    renderFrameRates();
+    renderMonitor();
     renderAppGrid();
     renderColorSlots();
     renderPresets();
@@ -701,6 +807,21 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
 
   autoFollowBox.addEventListener("change", () => {
     void prefs.patch({ autoFollow: autoFollowBox.checked });
+  });
+
+  monitorSetBtn.addEventListener("click", () => void applyMonitorTarget(monitorInput.value));
+  monitorClearBtn.addEventListener("click", () => void applyMonitorTarget(""));
+  monitorInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") void applyMonitorTarget(monitorInput.value);
+  });
+  monitorPickBtn.addEventListener("click", () => {
+    const name = selectedProcess?.();
+    if (!name) {
+      log?.(t("settings.general.monitorNoSelection"), "warn");
+      return;
+    }
+    monitorInput.value = name;
+    void applyMonitorTarget(name);
   });
 
   recordWavBox.addEventListener("change", () => {
@@ -830,6 +951,10 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
     },
     sync,
     syncKernel,
+    syncMonitor(tick) {
+      lastTick = tick;
+      renderMonitorState();
+    },
     relang: (next) => sync(next),
   };
 }

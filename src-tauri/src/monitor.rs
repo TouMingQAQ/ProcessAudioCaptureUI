@@ -7,7 +7,7 @@
 //! 2. 开启自动跟随后，如果当前源已经没在出声、而另一个窗口开始发声，
 //!    就把采集切到新的源上（带连续确认，避免抖动）。
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -32,6 +32,10 @@ const CANDIDATE_MIN_PEAK: f32 = 0.015;
 const CURRENT_SILENT_PEAK: f32 = 0.006;
 /// 连续多少次扫描都满足条件才真的切换。
 const SWITCH_STREAK: u32 = 2;
+/// 持续监听的目标起流失败后，隔多少个扫描周期再试（≈10 秒）。
+///
+/// 没有这个退避的话，一条怎么都起不来的流（比如目标被独占）会被每 1.2 秒重拉一次。
+const RESUME_BACKOFF_TICKS: u32 = 8;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,6 +56,10 @@ pub struct MonitorTick {
     pub sample_rate: u32,
     pub channels: u32,
     pub auto_follow: bool,
+    /// 持续监听的目标进程名（小写）；没有目标时为 `None`。
+    pub monitor_target: Option<String>,
+    /// 目标不在线，正在等它出现。
+    pub waiting: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -99,6 +107,8 @@ pub fn spawn(app: AppHandle) {
 fn run(app: AppHandle) {
     let mut streak = 0u32;
     let busy = Arc::new(AtomicBool::new(false));
+    // 持续监听起流失败后的退避计数（还剩几个周期不许再试）
+    let resume_backoff = Arc::new(AtomicU32::new(0));
 
     loop {
         thread::sleep(Duration::from_millis(SCAN_INTERVAL_MS));
@@ -157,6 +167,33 @@ fn run(app: AppHandle) {
             continue;
         }
 
+        // ---- 持续监听：目标一出现就（重新）起流，否则一直等 ------------------
+        //
+        // 只在"手上没有会话"时动手，免得和自动跟随抢同一条流。用户点过停止之后
+        // `monitor_armed` 就是 false，这里什么都不做 —— 他不会刚停下就被拉起来。
+        let armed = state.monitor_armed();
+        let target = state.monitor_target();
+        let target_window = if target.is_empty() {
+            None
+        } else {
+            selectable
+                .iter()
+                .find(|window| window.process_name.eq_ignore_ascii_case(&target))
+                .cloned()
+        };
+        let waiting = armed && !target.is_empty() && current_pid.is_none() && target_window.is_none();
+
+        // 退避：上一轮重试失败就再等几个周期
+        let backoff = resume_backoff.load(Ordering::SeqCst);
+        if backoff > 0 {
+            resume_backoff.store(backoff - 1, Ordering::SeqCst);
+        }
+        if state.set_monitor_waiting(waiting) != waiting {
+            if waiting {
+                println!("[ProcessAudioCapture] 持续监听：{target} 现在不在，先等着");
+            }
+        }
+
         // 媒体信息（曲名 / 歌手 / 播放状态）跟着目标条目一起由内核给出
         let media = capturing.as_ref().and_then(|window| window.media.clone());
 
@@ -173,11 +210,63 @@ fn run(app: AppHandle) {
                 sample_rate: status.sample_rate,
                 channels: status.channels,
                 auto_follow,
+                monitor_target: (!target.is_empty()).then(|| target.clone()),
+                waiting,
             },
         );
 
         // 这个循环本来就在盯采集状态，顺手把托盘菜单的文字 / 勾选刷新掉
         crate::tray::sync(&app);
+
+        // 目标在线、手上却没有会话 —— 这就是"接着听上次那个"的落地点
+        if let Some(window) = target_window {
+            let idle = current_pid.is_none();
+            if armed && idle && backoff == 0 && !busy.load(Ordering::SeqCst) {
+                let pid = window.pid;
+                let name = window.process_name.clone();
+                let record_wav = state.record_wav();
+                busy.store(true, Ordering::SeqCst);
+                let app_for_resume = app.clone();
+                let busy_for_resume = Arc::clone(&busy);
+                let backoff_for_resume = Arc::clone(&resume_backoff);
+                tauri::async_runtime::spawn_blocking(move || {
+                    let state = app_for_resume.state::<AppState>();
+                    match start_active(&app_for_resume, &state, pid, name.clone(), record_wav) {
+                        Ok(report) => {
+                            let message = format!(
+                                "持续监听：已开始采集 {}（PID {}）",
+                                report.process_name, report.pid
+                            );
+                            println!("[ProcessAudioCapture] {message}");
+                            let _ = app_for_resume.emit(
+                                CAPTURE_CHANGED_EVENT,
+                                CaptureChanged {
+                                    pid,
+                                    process_name: name,
+                                    switched: true,
+                                    message,
+                                },
+                            );
+                        }
+                        Err(err) => {
+                            backoff_for_resume.store(RESUME_BACKOFF_TICKS, Ordering::SeqCst);
+                            let message = format!("持续监听启动失败：{err}");
+                            println!("[ProcessAudioCapture] {message}");
+                            let _ = app_for_resume.emit(
+                                CAPTURE_CHANGED_EVENT,
+                                CaptureChanged {
+                                    pid,
+                                    process_name: name,
+                                    switched: false,
+                                    message,
+                                },
+                            );
+                        }
+                    }
+                    busy_for_resume.store(false, Ordering::SeqCst);
+                });
+            }
+        }
 
         // ---- 自动跟随 ----------------------------------------------------
         let Some(candidate) = candidate else {
