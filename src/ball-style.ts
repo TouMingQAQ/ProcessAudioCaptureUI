@@ -71,6 +71,8 @@ export const BALL_INNER_STYLES: BallStyle[] = [
   { id: "particles", layer: "inner", mode: "spectrum", colorSlots: 3 },
   // 涟漪：声压一圈圈荡开，响度越大越密越亮
   { id: "ripple", layer: "inner", mode: "level", colorSlots: 3 },
+  // VU 表：球体里一块老式指针表，指针跟着响度摆（三个颜色：刻度 / 指针 / 红区与峰值针）
+  { id: "vu", layer: "inner", mode: "level", colorSlots: 3 },
   { id: "none", layer: "inner", mode: "adaptive", colorSlots: 0 },
 ];
 
