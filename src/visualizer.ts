@@ -87,7 +87,7 @@ export class Visualizer {
   private peakSmooth = 0;
   private lastFrameAt = 0;
   private rafId = 0;
-  /** 画布颜色取自主题变量；换主题后调 [`refreshTheme`] 重新读一次。 */
+  /** 画布颜色取自主题色板（波形 / 频谱固定用亮色那份）；换主题后调 [`refreshTheme`]。 */
   private colors = canvasColors();
 
   /** 每帧回调：用于驱动电平表等 DOM 元素。 */
@@ -100,7 +100,7 @@ export class Visualizer {
     this.rafId = requestAnimationFrame(this.loop);
   }
 
-  /** 主题 / 明暗变了以后重新读一遍 CSS 变量，下一帧就是新配色。 */
+  /** 主题变了以后重新取一遍颜色，下一帧就是新配色。 */
   refreshTheme() {
     this.colors = canvasColors();
   }

@@ -3,8 +3,8 @@
  *
  * 一套主题 = 一份色板（`Palette`），色板里的每个字段都会变成一个 CSS 变量
  * `--ui-<kebab-case>`，页面样式全部读这些变量，所以换主题只是重写一批变量，
- * 不用动任何布局。画布（波形 / 频谱 / 悬浮球）拿不到 CSS 变量，改用
- * [`paletteStyle`] 里同样的变量名 + [`cssVar`] 读回来，保证两边颜色永远一致。
+ * 不用动任何布局。画布拿不到 CSS 变量，各自从色板直接取色：[`canvasColors`]
+ * 给主界面的波形 / 频谱（固定用亮色那份），[`ballOrbColors`] 给悬浮球（跟着明暗）。
  *
  * 主题分为「应用主题」与「悬浮球主题」两条线，各自都有亮色 / 暗色两份色板；
  * 具体用哪份由深色模式（`light` / `dark` / `system`）决定。
@@ -677,10 +677,20 @@ export function resolveAppearance(mode: ThemeMode): Appearance {
   return mode === "system" ? (prefersDark() ? "dark" : "light") : mode;
 }
 
+/**
+ * 当前生效的应用主题 —— 只给画布用（见 [`canvasColors`]）。
+ *
+ * 画布不吃 CSS 变量：那里面只放"当前生效"的那一份配色，而波形 / 频谱固定要**亮色**
+ * 那一份，所以这里自己记一个主题 id。初值只是兜底，`applyAppTheme` 一调就会覆盖。
+ */
+let activeAppTheme: AppTheme = APP_THEMES[0];
+
 /** 应用主题：写变量 + 标记明暗，返回实际生效的明暗（窗口标题栏要用）。 */
 export function applyAppTheme(themeId: string, mode: ThemeMode): Appearance {
   const appearance = resolveAppearance(mode);
-  applyVars(document.documentElement, paletteStyle(appThemeById(themeId)[appearance]));
+  const theme = appThemeById(themeId);
+  activeAppTheme = theme;
+  applyVars(document.documentElement, paletteStyle(theme[appearance]));
   markAppearance(appearance);
   return appearance;
 }
@@ -733,23 +743,29 @@ export function orbPaletteFor(themeId: string, appearance: Appearance): OrbPalet
   return ballThemeById(themeId)[appearance].orb;
 }
 
-/** 读一个已经生效的 CSS 变量（画布用）。 */
-export function cssVar(name: string, fallback = "#000000"): string {
-  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  return value || fallback;
-}
-
-/** 画布需要的颜色一次读齐。 */
+/**
+ * 主界面波形 / 频谱画布要用的颜色。
+ *
+ * 这两块画布画的是**数据**，不是界面：它们固定取当前应用主题的**亮色**那一份，
+ * 深色（含跟随系统）下也不跟着压暗 —— 深色下面板底色本就是深的，"深底 + 亮柱"
+ * 已经够清楚，再把柱子一起调暗只会更难看清。换主题时仍然会换（见 `applyAppTheme`），
+ * 只是不再跟着明暗走。
+ *
+ * 唯一跟着明暗走的是参考线 `grid`：它得压在面板底色上，跟着变才不会糊成一片。
+ */
 export function canvasColors() {
+  const light = activeAppTheme.light;
+  const surface =
+    document.documentElement.dataset.appearance === "dark" ? activeAppTheme.dark : light;
   return {
-    grid: cssVar("--ui-viz-grid", "rgba(0,0,0,0.15)"),
-    waveA: cssVar("--ui-viz-wave-a"),
-    waveB: cssVar("--ui-viz-wave-b"),
-    waveC: cssVar("--ui-viz-wave-c"),
-    specA: cssVar("--ui-viz-spec-a"),
-    specB: cssVar("--ui-viz-spec-b"),
-    specC: cssVar("--ui-viz-spec-c"),
-    peak: cssVar("--ui-viz-peak"),
-    glow: cssVar("--ui-viz-glow"),
+    grid: surface.vizGrid,
+    waveA: light.vizWaveA,
+    waveB: light.vizWaveB,
+    waveC: light.vizWaveC,
+    specA: light.vizSpecA,
+    specB: light.vizSpecB,
+    specC: light.vizSpecC,
+    peak: light.vizPeak,
+    glow: light.vizGlow,
   };
 }

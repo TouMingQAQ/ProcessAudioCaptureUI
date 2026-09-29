@@ -394,6 +394,8 @@ function refreshTexts() {
 async function bootstrap() {
   // 先落地主题与语言，避免默认配色闪一下再换
   settings = await prefs.load();
+  // 画布是在模块顶层就建好的（那会儿主题还没读回来），这里按刚生效的主题补取一次色
+  visualizer.refreshTheme();
 
   panel = createSettingsPanel({
     prefs,
