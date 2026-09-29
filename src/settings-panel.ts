@@ -1,9 +1,10 @@
 /**
  * 设置面板（主界面左下角的「设置」按钮打开）。
  *
- * 三个 tab：
+ * 四个 tab：
  * * 通用 —— 语言、自动跟随、默认录制；
- * * 主题 —— 深色模式 + 应用主题 + 悬浮球配色 + 悬浮球律动样式；
+ * * 主题 —— 深色模式 + 应用主题；
+ * * 悬浮球 —— 配色 + 律动样式 + 律动数据；
  * * 内核 —— 采集内核的加载状态与重新加载（原来挂在顶栏上，现在挪进来）。
  *
  * 主题卡片是真正"所见即所得"的：卡片里的浅色 / 深色两半各自带上那套主题的 CSS
@@ -259,6 +260,7 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
   const sourceGroup = $<HTMLDivElement>("ball-source-group");
   const sourceNote = $<HTMLParagraphElement>("ball-source-note");
   const resetBtn = $<HTMLButtonElement>("theme-reset");
+  const ballResetBtn = $<HTMLButtonElement>("ball-reset");
   const reloadBtn = $<HTMLButtonElement>("btn-kernel-reload");
 
   const knStatus = $<HTMLDivElement>("kn-status");
@@ -491,12 +493,14 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
   });
 
   resetBtn.addEventListener("click", () => {
+    void prefs.patch({ appTheme: DEFAULT_APP_THEME, themeMode: "system" });
+  });
+
+  ballResetBtn.addEventListener("click", () => {
     void prefs.patch({
-      appTheme: DEFAULT_APP_THEME,
       ballTheme: DEFAULT_BALL_THEME,
       ballStyle: DEFAULT_BALL_STYLE,
       ballSource: DEFAULT_BALL_DATA_SOURCE,
-      themeMode: "system",
     });
   });
 

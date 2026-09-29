@@ -168,6 +168,10 @@
               <span class="tab-glyph" aria-hidden="true">◐</span>
               <span data-i18n="settings.tab.theme">主题</span>
             </button>
+            <button class="settings-tab" type="button" data-tab="ball" role="tab">
+              <span class="tab-glyph" aria-hidden="true">◎</span>
+              <span data-i18n="settings.tab.ball">悬浮球</span>
+            </button>
             <button class="settings-tab" type="button" data-tab="kernel" role="tab">
               <span class="tab-glyph" aria-hidden="true">⛭</span>
               <span data-i18n="settings.tab.kernel">内核</span>
@@ -222,7 +226,7 @@
                 <div class="set-block-head">
                   <h3 data-i18n="settings.theme.mode">深色模式</h3>
                   <p data-i18n="settings.theme.modeHint">
-                    决定下面两套主题用白天还是黑夜的那一份预览，同时作用于主界面与悬浮球。
+                    决定「主题」与「悬浮球」两处用白天还是黑夜的那一份，两边同时生效。
                   </p>
                 </div>
                 <div id="theme-mode-group" class="segmented" role="group">
@@ -253,12 +257,21 @@
                 <div id="app-theme-grid" class="theme-grid"></div>
               </section>
 
+            </div>
+
+            <!-- -------------------------------------------------- 悬浮球 -->
+            <div class="settings-pane" data-pane="ball">
               <section class="set-block">
-                <div class="set-block-head">
-                  <h3 data-i18n="settings.theme.ball">悬浮球配色</h3>
-                  <p data-i18n="settings.theme.ballHint">
-                    只管颜色：小球与悬停面板的用色。形状由下面的「律动样式」决定。
-                  </p>
+                <div class="set-block-head is-row">
+                  <div>
+                    <h3 data-i18n="settings.theme.ball">悬浮球配色</h3>
+                    <p data-i18n="settings.theme.ballHint">
+                      只管颜色：小球与悬停面板的用色。形状由下面的「律动样式」决定。
+                    </p>
+                  </div>
+                  <button id="ball-reset" class="btn btn-ghost" type="button" data-i18n="settings.theme.reset">
+                    恢复默认
+                  </button>
                 </div>
                 <div id="ball-theme-grid" class="theme-grid"></div>
               </section>

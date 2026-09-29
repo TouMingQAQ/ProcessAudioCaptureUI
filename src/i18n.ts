@@ -104,6 +104,7 @@ const ZH: Dict = {
   "settings.close": "关闭",
   "settings.tab.general": "通用",
   "settings.tab.theme": "主题",
+  "settings.tab.ball": "悬浮球",
   "settings.tab.kernel": "内核",
 
   "settings.general.language": "语言",
@@ -117,7 +118,7 @@ const ZH: Dict = {
   "settings.general.saved": "设置已保存",
 
   "settings.theme.mode": "深色模式",
-  "settings.theme.modeHint": "决定下面两套主题用白天还是黑夜的那一份预览，同时作用于主界面与悬浮球。",
+  "settings.theme.modeHint": "决定「主题」与「悬浮球」两处用白天还是黑夜的那一份，两边同时生效。",
   "settings.theme.mode.light": "浅色",
   "settings.theme.mode.dark": "深色",
   "settings.theme.mode.system": "跟随系统",
@@ -281,6 +282,7 @@ const EN: Dict = {
   "settings.close": "Close",
   "settings.tab.general": "General",
   "settings.tab.theme": "Theme",
+  "settings.tab.ball": "Orb",
   "settings.tab.kernel": "Kernel",
 
   "settings.general.language": "Language",
