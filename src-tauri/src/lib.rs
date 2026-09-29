@@ -423,6 +423,8 @@ fn save_settings(
     state.auto_follow.store(settings.auto_follow, Ordering::Relaxed);
     state.record_wav.store(settings.record_wav, Ordering::Relaxed);
     state.set_window_lists(&settings.window_allowlist, &settings.window_blocklist);
+    // 锁定状态由悬停检测线程读，改完下一轮（≤25ms）就生效
+    state.ball.set_locked(settings.ball_locked);
 
     prefs::broadcast(&app, &settings);
     Ok(settings)
@@ -583,6 +585,7 @@ pub fn run() {
                 state.auto_follow.store(settings.auto_follow, Ordering::Relaxed);
                 state.record_wav.store(settings.record_wav, Ordering::Relaxed);
                 state.set_window_lists(&settings.window_allowlist, &settings.window_blocklist);
+                state.ball.set_locked(settings.ball_locked);
             }
 
             // 悬浮球定位后显示，避免先出现在左上角再跳过去

@@ -193,6 +193,10 @@ html[data-ball-outer="wave"] .orb {
   font-size: 11px;
   cursor: pointer;
   transition: background 0.15s, transform 0.1s;
+  /* 面板头上现在有两个按钮（锁定 / 打开主界面），宽度紧张时先挤左边的标题，
+     别把按钮里的字挤成两行 */
+  flex: none;
+  white-space: nowrap;
 }
 
 .mini-btn:hover {

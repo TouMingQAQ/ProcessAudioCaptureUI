@@ -31,6 +31,7 @@ const $ = <T extends HTMLElement>(id: string): T => {
 
 const btnRefresh = $<HTMLButtonElement>("btn-refresh");
 const btnBall = $<HTMLButtonElement>("btn-ball");
+const btnBallLock = $<HTMLButtonElement>("btn-ball-lock");
 const btnSettings = $<HTMLButtonElement>("btn-settings");
 const btnCapture = $<HTMLButtonElement>("btn-capture");
 const followMain = $<HTMLInputElement>("follow-main");
@@ -453,6 +454,19 @@ function syncBallButton() {
 }
 
 /**
+ * 顶部栏那颗锁定按钮。
+ *
+ * 锁定是"悬浮球不吃鼠标"，所以这里同时也是**最顺手的解锁入口** —— 球被锁上之后它自己的
+ * 悬停面板根本打不开，只能从这里或「设置 → 悬浮球」解开。
+ */
+function syncLockButton() {
+  const locked = settings.ballLocked;
+  btnBallLock.textContent = locked ? t("ball.unlock") : t("ball.lock");
+  btnBallLock.title = locked ? t("ball.unlockTitle") : t("ball.lockTitle");
+  btnBallLock.setAttribute("aria-pressed", String(locked));
+}
+
+/**
  * 后端每 1.2 秒扫一次音频会话，这里把「当前监听窗口」的信息实时反映到界面上 ——
  * 音乐软件切歌时窗口标题会跟着变。帧数 / 已运行时长不再展示。
  */
@@ -489,6 +503,7 @@ function applyTick(tick: MonitorTick) {
 function refreshTexts() {
   applyI18n();
   syncBallButton();
+  syncLockButton();
   sessionState.textContent = t(sessionKey);
   sessionState.className = `pill ${sessionCls}`;
   btnCapture.textContent = capturingPid !== null ? t("view.stop") : t("view.capture");
@@ -591,6 +606,16 @@ async function bootstrap() {
       log(ballVisible ? t("ball.shown") : t("ball.hidden"));
     } catch (err) {
       log(t("ball.toggleFailed", { err: String(err) }), "error");
+    }
+  });
+  btnBallLock.addEventListener("click", async () => {
+    const next = !settings.ballLocked;
+    try {
+      await prefs.patch({ ballLocked: next });
+      syncLockButton();
+      log(next ? t("ball.locked") : t("ball.unlocked"));
+    } catch (err) {
+      log(t("ball.lockFailed", { err: String(err) }), "error");
     }
   });
   followMain.addEventListener("change", async () => {

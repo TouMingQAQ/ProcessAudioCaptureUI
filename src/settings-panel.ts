@@ -286,6 +286,7 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
   const pulseBox = $<HTMLInputElement>("ball-pulse");
   const pulseGroup = $<HTMLDivElement>("ball-pulse-group");
   const pulseNote = $<HTMLParagraphElement>("ball-pulse-note");
+  const lockedBox = $<HTMLInputElement>("ball-locked");
 
   const knStatus = $<HTMLDivElement>("kn-status");
   const knStatusDot = $<HTMLSpanElement>("kn-status-dot");
@@ -489,6 +490,8 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
     const enabled = settings.ballPulse;
     pulseGroup.classList.toggle("is-disabled", !enabled);
     pulseNote.textContent = t(`ballPulse.hint.${settings.ballPulseAlgorithm}`);
+
+    lockedBox.checked = settings.ballLocked;
   }
 
   /* ------------------------------------------------------------- 窗口名单 */
@@ -702,6 +705,10 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
 
   recordWavBox.addEventListener("change", () => {
     void prefs.patch({ recordWav: recordWavBox.checked });
+  });
+
+  lockedBox.addEventListener("change", () => {
+    void prefs.patch({ ballLocked: lockedBox.checked });
   });
 
   appGrid.addEventListener("click", (event) => {

@@ -68,6 +68,9 @@ pub struct Settings {
     /// 换分辨率、换显示器不用换算，也不怕窗口尺寸怎么变。
     pub ball_pos_x: f32,
     pub ball_pos_y: f32,
+    /// 锁定悬浮球：锁定后它不吃鼠标 —— 悬停不展开面板、不能拖动、点不动，
+    /// 整块区域直接穿透给桌面。解锁只能回主界面的设置页（见 `ball::run`）。
+    pub ball_locked: bool,
 
     /* ------------------------------------------------- 遗留字段（仅用于迁移） */
     /// 旧版「悬浮球配色」id。配色改成自定义色槽后不再读取，
@@ -103,6 +106,7 @@ impl Default for Settings {
             ball_pulse_amount: 1.0,
             ball_pos_x: 0.92,
             ball_pos_y: 0.88,
+            ball_locked: false,
 
             ball_theme: "solid".to_string(),
             ball_style: "ring".to_string(),

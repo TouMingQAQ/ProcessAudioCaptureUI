@@ -116,6 +116,21 @@ const ZH: Dict = {
   "settings.tab.windows": "窗口名单",
   "settings.tab.kernel": "内核",
 
+  "ball.lock": "锁定悬浮球",
+  "ball.unlock": "解锁悬浮球",
+  "ball.lockTitle": "锁定后小球不吃鼠标：不展开面板、拖不动、点不了，整块区域穿透给桌面。解锁在这里或设置里。",
+  "ball.unlockTitle": "点一下解锁：小球重新响应鼠标。",
+  "ball.locked": "已锁定悬浮球：鼠标不再响应，解锁在顶部栏或设置里",
+  "ball.unlocked": "已解锁悬浮球",
+  "ball.lockFailed": "切换锁定失败：{err}",
+
+  "ballWindow.lock": "锁定",
+  "ballWindow.lockTitle": "锁上之后小球不吃鼠标，这块面板也会立刻收起 —— 解锁请回主界面",
+
+  "settings.ball.lock": "锁定悬浮球",
+  "settings.ball.lockHint": "锁定后小球只剩显示：鼠标扫过不再展开面板，也拖不动、点不了，整块区域直接穿透给桌面。球照常跟着音频动。解锁只能回到这里。",
+  "settings.ball.lockToggle": "锁定（不吃鼠标）",
+
   "settings.window.title": "窗口名单",
   "settings.window.hint": "按进程名匹配（如 chrome.exe），不区分大小写。黑名单里的进程不会出现在窗口列表里，也不会被自动跟随或悬浮球的「开始采集」选中；白名单留空表示不限制，一旦填了就只检测名单里的进程。黑名单优先于白名单。",
   "settings.window.allow": "白名单",
@@ -351,6 +366,21 @@ const EN: Dict = {
   "settings.tab.ball": "Orb",
   "settings.tab.windows": "Windows",
   "settings.tab.kernel": "Kernel",
+
+  "ball.lock": "Lock orb",
+  "ball.unlock": "Unlock orb",
+  "ball.lockTitle": "Once locked the orb ignores the mouse: no panel, no dragging, no clicking — the area passes through to the desktop. Unlock it here or in the settings.",
+  "ball.unlockTitle": "Click to unlock: the orb responds to the mouse again.",
+  "ball.locked": "Orb locked — the mouse no longer reaches it. Unlock from the top bar or the settings.",
+  "ball.unlocked": "Orb unlocked",
+  "ball.lockFailed": "Could not toggle the lock: {err}",
+
+  "ballWindow.lock": "Lock",
+  "ballWindow.lockTitle": "Locking makes the orb ignore the mouse, and this panel closes right away — unlock it from the main window",
+
+  "settings.ball.lock": "Lock the orb",
+  "settings.ball.lockHint": "Once locked the orb is display-only: hovering no longer opens the panel, and it cannot be dragged or clicked — the whole area passes mouse input straight through to the desktop. It keeps pulsing with the audio. Unlock it from here.",
+  "settings.ball.lockToggle": "Locked (ignores the mouse)",
 
   "settings.window.title": "Window lists",
   "settings.window.hint": "Matched by process name (e.g. chrome.exe), case-insensitive. Blocked processes never show up in the window list and are never picked by auto-follow or the orb's start-capture shortcut. An empty allow list means no restriction; once it is filled, only those processes are detected. The block list wins over the allow list.",

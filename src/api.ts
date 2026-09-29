@@ -150,6 +150,11 @@ export interface Settings {
   /** 悬浮球中心在屏幕里的位置（0~1 百分比），拖动后记住。 */
   ballPosX: number;
   ballPosY: number;
+  /**
+   * 锁定悬浮球：不吃鼠标（悬停不展开面板、不能拖动、点不动），解锁只能回主界面的设置。
+   * 球照常显示、照常跟着音频动。
+   */
+  ballLocked: boolean;
 
   /** 旧版「悬浮球配色」id：只在 `ballColors` 为空时拿来当初始色。 */
   ballTheme: string;

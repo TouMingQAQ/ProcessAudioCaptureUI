@@ -58,6 +58,7 @@ export const DEFAULT_SETTINGS: Settings = {
   // 球心在屏幕里的位置（0~1）：默认贴着右下角那一带，和以前的样子差不多
   ballPosX: 0.92,
   ballPosY: 0.88,
+  ballLocked: false,
 
   // 遗留字段：只在迁移时读一次
   ballTheme: "solid",
@@ -121,6 +122,7 @@ function normalizeBall(merged: Settings): void {
   // 球心位置是屏幕里的百分比：夹在 0..1，具体留边由前端按球的实际大小算
   merged.ballPosX = clampNumber(merged.ballPosX, 0, 1, 0.92);
   merged.ballPosY = clampNumber(merged.ballPosY, 0, 1, 0.88);
+  merged.ballLocked = Boolean(merged.ballLocked);
 }
 
 /** 字段可能是手改坏的、也可能来自旧版本，一律收敛到已知取值。 */

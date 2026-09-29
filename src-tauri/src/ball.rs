@@ -11,6 +11,10 @@
 //! 知道；这里的轮询只要拿它跟光标位置比一下就行。
 //!
 //! 拖动期间窗口**固定保持可交互**：那时前端正收着 pointer 事件，一旦切成穿透，拖动就断了。
+//!
+//! 锁定（设置里的 `ball_locked`）时上面这套整个跳过：窗口常驻穿透，悬停检测不作数 ——
+//! 球还在原地画着、还跟着音频动，但对鼠标完全没反应。这是给"不想被误碰"的场景准备的，
+//! 解锁只能回主界面的设置页。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -43,11 +47,12 @@ pub struct BallHit {
     pub panel: Option<[f64; 4]>,
 }
 
-/// 悬浮球的交互状态：命中区域 + 是否正在拖动。
+/// 悬浮球的交互状态：命中区域 + 是否正在拖动 + 是否被锁定。
 #[derive(Default)]
 pub struct BallInteraction {
     hit: Mutex<BallHit>,
     dragging: AtomicBool,
+    locked: AtomicBool,
 }
 
 impl BallInteraction {
@@ -68,12 +73,21 @@ impl BallInteraction {
         self.dragging.store(dragging, Ordering::Relaxed);
     }
 
+    /// 锁定 / 解锁。锁定后悬停检测整个跳过，窗口常驻穿透（见 [`run`]）。
+    pub fn set_locked(&self, locked: bool) {
+        self.locked.store(locked, Ordering::Relaxed);
+    }
+
     fn hit(&self) -> BallHit {
         self.hit.lock().map(|slot| *slot).unwrap_or_default()
     }
 
     fn is_dragging(&self) -> bool {
         self.dragging.load(Ordering::Relaxed)
+    }
+
+    fn is_locked(&self) -> bool {
+        self.locked.load(Ordering::Relaxed)
     }
 }
 
@@ -108,6 +122,16 @@ fn run(app: AppHandle) {
 
         // 隐藏时状态清零，下次显示从收起开始
         if !window.is_visible().unwrap_or(false) {
+            inside_since = None;
+            if expanded {
+                set_state(&app, &window, &mut expanded, false);
+            }
+            continue;
+        }
+
+        // 锁定：整窗常驻穿透，光标扫过小球毫无反应 —— 展不开面板、点不动、也拖不走。
+        // 球照常画、照常跟着音频动，只是跟鼠标彻底无关了。
+        if state.ball.is_locked() {
             inside_since = None;
             if expanded {
                 set_state(&app, &window, &mut expanded, false);

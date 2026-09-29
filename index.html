@@ -26,8 +26,11 @@
           </div>
         </div>
 
-        <!-- 内核配置挪进了「设置 → 内核」，这里只留悬浮球开关 -->
+        <!-- 内核配置挪进了「设置 → 内核」，这里只留悬浮球的显示与锁定开关 -->
         <div class="topbar-right">
+          <button id="btn-ball-lock" class="btn btn-ghost" type="button" aria-pressed="false">
+            锁定悬浮球
+          </button>
           <button id="btn-ball" class="btn btn-ghost" type="button" aria-pressed="true">
             悬浮球 开
           </button>
@@ -364,6 +367,20 @@
                   </div>
                   <p id="ball-pulse-note" class="set-note"></p>
                 </div>
+              </section>
+
+              <!-- 锁定：不吃鼠标 -->
+              <section class="set-block">
+                <div class="set-block-head">
+                  <h3 data-i18n="settings.ball.lock">锁定悬浮球</h3>
+                  <p data-i18n="settings.ball.lockHint">
+                    锁定后小球只剩显示：鼠标扫过不再展开面板，也拖不动、点不了，整块区域直接穿透给桌面。球照常跟着音频动。解锁只能回到这里。
+                  </p>
+                </div>
+                <label class="switch switch-block">
+                  <input id="ball-locked" type="checkbox" />
+                  <span data-i18n="settings.ball.lockToggle">锁定（不吃鼠标）</span>
+                </label>
               </section>
             </div>
 

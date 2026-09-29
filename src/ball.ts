@@ -39,6 +39,7 @@ const candidateBox = $<HTMLDivElement>("candidate");
 const candidateText = $<HTMLSpanElement>("candidate-text");
 const btnCapture = $<HTMLButtonElement>("btn-capture");
 const btnFollow = $<HTMLButtonElement>("btn-follow");
+const btnLock = $<HTMLButtonElement>("btn-lock");
 const btnMain = $<HTMLButtonElement>("btn-main");
 const hint = $<HTMLParagraphElement>("hint");
 
@@ -49,6 +50,8 @@ let capturing = false;
 let autoFollow = false;
 let busy = false;
 let expanded = false;
+/** 悬浮球是否被锁定（设置里那个开关）。锁定时窗口常驻穿透，这里只做兜底。 */
+let locked = false;
 let hintTimer = 0;
 /** 最近一次扫描结果：语言一变要用新语言把这一tick 重新渲染一遍。 */
 let lastTick: MonitorTick | null = null;
@@ -180,6 +183,9 @@ function reportGeometry() {
 }
 
 orb.addEventListener("pointerdown", (event) => {
+  // 锁定后窗口本就是穿透的，指针事件根本到不了这里；这一条是给"刚锁上、事件还在路上"
+  // 那一瞬兜底，免得球被拖走半个身位
+  if (locked) return;
   if (event.button !== 0) return;
   event.preventDefault();
   // 球心就是 offsetLeft / offsetTop（`left` / `top` 定位的就是它），
@@ -425,6 +431,21 @@ btnMain.addEventListener("click", () => {
   void api.showMainWindow().catch(() => {});
 });
 
+/**
+ * 面板里的「锁定」。
+ *
+ * 这一按是单向的：锁上之后整窗穿透，这块面板再也打不开 —— 想解锁得回主界面（顶部栏
+ * 那颗按钮，或「设置 → 悬浮球」）。所以这里的按钮实际只在"锁上"那一刻起作用，写成
+ * `!locked` 只是别让它写死。
+ */
+btnLock.addEventListener("click", async () => {
+  try {
+    await prefs.patch({ ballLocked: !locked });
+  } catch (err) {
+    flashHint(String(err));
+  }
+});
+
 /* --------------------------------------------------------------- 启动 */
 
 /** 把设置里的外观部分整个交给小球渲染器（颜色、内外样式、数据源、尺寸、缩放）。 */
@@ -446,6 +467,7 @@ function applyLook(settings: Settings): void {
 async function bootstrap() {
   // 先落地主题与语言，避免默认配色闪一下再换
   const loaded = await prefs.load();
+  locked = loaded.ballLocked;
   applyLook(loaded);
   // 球摆到上次记住的位置（首次运行就是默认的右下角那一带）
   moveOrb(loaded.ballPosX, loaded.ballPosY);
@@ -474,6 +496,9 @@ async function bootstrap() {
     flashHint(event.payload.message);
   });
   await prefs.subscribe((next) => {
+    locked = next.ballLocked;
+    // 刚被锁上时本地可能还开着面板：立刻收起来，别留一块点不动的面板悬在桌面上
+    if (locked) applyHover(false);
     // 外观、数据源与语言都可能变：重新读一次外观，再用新语言重画当前画面
     applyLook(next);
     // 球可能被调大了，位置重新夹一下（免得半个球露到屏幕外）
