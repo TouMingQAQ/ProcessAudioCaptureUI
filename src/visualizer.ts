@@ -41,27 +41,46 @@ class Surface {
   }
 }
 
-/** 频谱柱的峰值保持（超过则立即抬升，随后匀速回落）。 */
+/** 峰值帽刷新后先钉住不动的帧数（≈0.2 秒 @60fps）。 */
+const PEAK_HOLD_FRAMES = 12;
+/** 停留结束后每帧下落的量（≈0.55 秒落满量程 @60fps）。 */
+const PEAK_FALL = 0.03;
+
+/**
+ * 频谱柱的峰值帽：短暂停留 + 匀速滑落。
+ *
+ * 规则是「抬升 → 钉住 0.2 秒 → 匀速落」：新峰值一出现就立刻顶上去并重新计时，
+ * 让最高点停一下看得清；停够帧数后每帧稳定减 `fall`，一直落到当前柱高为止。
+ *
+ * 早先是「速度越滑越慢」：刷新时给速度 0.014，每帧再减 0.0035，三四帧后速度归零，
+ * 帽子就永久挂在那儿不动了 —— 只有等柱子重新涨过它才会被顶走。所以画面里到处是
+ * 悬在半空的旧峰值，像一层散不掉的重影。
+ */
 class PeakHold {
   private readonly values = new Float32Array(SPECTRUM_BINS);
-  private readonly velocities = new Float32Array(SPECTRUM_BINS);
+  /** 各柱还剩几帧停留；峰值每次刷新都重新计时。 */
+  private readonly holds = new Uint8Array(SPECTRUM_BINS);
 
-  update(spectrum: ArrayLike<number>, decay: number) {
+  update(spectrum: ArrayLike<number>, fall: number) {
     for (let i = 0; i < SPECTRUM_BINS; i++) {
       const target = spectrum[i] ?? 0;
-      this.velocities[i] = Math.max(this.velocities[i] - decay, 0);
-      if (target >= this.values[i]) {
+      const value = this.values[i] ?? 0;
+
+      // 只在真的被顶高时重新计时；落回柱高后就一路跟着走，不再一格一格地停
+      if (target > value) {
         this.values[i] = target;
-        this.velocities[i] = 0.014;
+        this.holds[i] = PEAK_HOLD_FRAMES;
+      } else if (this.holds[i] > 0) {
+        this.holds[i] = this.holds[i] - 1;
       } else {
-        this.values[i] = Math.max(this.values[i] - this.velocities[i], target);
+        this.values[i] = Math.max(value - fall, target);
       }
     }
   }
 
   reset() {
     this.values.fill(0);
-    this.velocities.fill(0);
+    this.holds.fill(0);
   }
 
   at(index: number) {
@@ -143,7 +162,7 @@ export class Visualizer {
     }
     this.rmsSmooth = mix(this.rmsSmooth, target?.rms ?? 0);
     this.peakSmooth = mix(this.peakSmooth, target?.peak ?? 0);
-    this.peaks.update(this.specSmooth, 0.0035);
+    this.peaks.update(this.specSmooth, PEAK_FALL);
 
     this.drawWave();
     this.drawSpectrum();
