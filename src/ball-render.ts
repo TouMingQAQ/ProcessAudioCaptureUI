@@ -162,8 +162,8 @@ export function renderOrb(
   }
   drawHalo(ctx, shared, cache.halo);
 
-  innerStyleDraw[innerStyle.id]?.(ctx, { ...shared, ...frame.inner });
-  outerStyleDraw[outerStyle.id]?.(ctx, { ...shared, ...frame.outer });
+  innerStyleDraw[innerStyle.renderer]?.(ctx, { ...shared, ...frame.inner });
+  outerStyleDraw[outerStyle.renderer]?.(ctx, { ...shared, ...frame.outer });
 
   // 削顶：加一圈外描边，防止"输出爆了却看不出来"
   if (frame.peak > 0.985) {
@@ -230,11 +230,6 @@ function drawPulseDot(ctx: CanvasRenderingContext2D, d: DrawCtx, radiusUnits: nu
 
 /* ---------------------------------------------------------------- 内圈 */
 
-/** 球芯：一颗渐变球 + 一个随响度轻轻起伏的中心点。 */
-function drawCore(ctx: CanvasRenderingContext2D, d: LayerCtx) {
-  drawCoreDisc(ctx, d);
-  drawPulseDot(ctx, d, 1.8 + d.level * 3.4);
-}
 
 /** 脉冲：球芯之外再放两圈随音量涨落的同心圈。 */
 function drawPulse(ctx: CanvasRenderingContext2D, d: LayerCtx) {
@@ -254,58 +249,6 @@ function drawPulse(ctx: CanvasRenderingContext2D, d: LayerCtx) {
   drawPulseDot(ctx, d, 2.4 + level * 8);
 }
 
-/** 粒子：一圈细小光点被音乐推开，安静时轻轻呼吸。 */
-function drawParticles(ctx: CanvasRenderingContext2D, d: LayerCtx) {
-  drawCoreDisc(ctx, d);
-  const { center, unit, bands, colors, live, time } = d;
-  const count = bands.length;
-  const link = slotColor(colors, 1);
-
-  for (let i = 0; i < count; i++) {
-    const angle = -Math.PI / 2 + (i / count) * TAU;
-    const value = clamp01(live ? (bands[i] ?? 0) : idleBand(i, time));
-    // 每个点有自己的相位，整圈才不会像齿轮一样整齐地一起动
-    const wobble = 0.8 + 0.2 * Math.sin(time / 520 + i * 1.7);
-    const spread = (25 + value * 15) * unit * wobble;
-    const dot = (0.9 + value * 2.1) * unit;
-    const x = center + Math.cos(angle) * spread;
-    const y = center + Math.sin(angle) * spread;
-
-    ctx.globalAlpha = 0.35 + value * 0.65;
-    ctx.fillStyle = slotRamp(colors, i / count);
-    ctx.beginPath();
-    ctx.arc(x, y, dot, 0, TAU);
-    ctx.fill();
-    if (value > 0.6) {
-      ctx.globalAlpha = (value - 0.6) * 1.6;
-      ctx.strokeStyle = link;
-      ctx.lineWidth = Math.max(0.6, 0.9 * unit);
-      ctx.beginPath();
-      ctx.moveTo(center + Math.cos(angle) * 22 * unit, center + Math.sin(angle) * 22 * unit);
-      ctx.lineTo(x, y);
-      ctx.stroke();
-    }
-  }
-}
-
-/** 涟漪：声压一圈圈荡开，响度越大涟漪越密越亮。 */
-function drawRipple(ctx: CanvasRenderingContext2D, d: LayerCtx) {
-  const { center, unit, colors, level, breathe, time, live } = d;
-
-  const rings = 5;
-  for (let i = 0; i < rings; i++) {
-    // 每圈错开一段时间往外走，响的时候走得更快、圈更亮
-    const phase = (((time / (2400 - level * 1300) + i / rings) % 1) + 1) % 1;
-    const radius = (10 + phase * 34) * unit * breathe;
-    const alpha = (1 - phase) * (live ? 0.25 + level * 0.7 : 0.25);
-    ctx.globalAlpha = clamp01(alpha);
-    ctx.strokeStyle = slotRamp(colors, phase);
-    ctx.lineWidth = Math.max(1.1, (1.5 + level * 2.4) * unit);
-    ctx.beginPath();
-    ctx.arc(center, center, radius, 0, TAU);
-    ctx.stroke();
-  }
-}
 
 /**
  * VU 表：球体里一块老式指针表盘 —— 一条刻度弧 + 一根跟着响度摆过去的指针。
@@ -593,33 +536,6 @@ function drawRing(ctx: CanvasRenderingContext2D, d: LayerCtx) {
   }
 }
 
-/** 柱阵：球体正面一列柱子，低音在左、高音在右。 */
-function drawBars(ctx: CanvasRenderingContext2D, d: LayerCtx) {
-  const { center, unit, bands, colors, live, time } = d;
-  const count = bands.length;
-  const span = 32 * unit;
-  const width = Math.max(1, (span / count) * 0.62);
-
-  for (let i = 0; i < count; i++) {
-    const value = clamp01(live ? (bands[i] ?? 0) : idleBand(i, time) * 0.8);
-    const x = center - span / 2 + ((i + 0.5) / count) * span;
-    const height = (1.2 + value * 20) * unit;
-    ctx.globalAlpha = 0.55 + value * 0.45;
-    ctx.fillStyle = slotRamp(colors, i / count);
-    ctx.beginPath();
-    ctx.roundRect(x - width / 2, center - height / 2, width, height, width / 2);
-    ctx.fill();
-  }
-
-  // 中间一条细横线，柱子不会看起来"浮在空中"
-  ctx.globalAlpha = 0.35;
-  ctx.strokeStyle = slotColor(colors, 1);
-  ctx.lineWidth = Math.max(1, unit);
-  ctx.beginPath();
-  ctx.moveTo(center - span / 2, center);
-  ctx.lineTo(center + span / 2, center);
-  ctx.stroke();
-}
 
 /** 示波：把这一层的数据卷成一圈描出来。 */
 function drawWave(ctx: CanvasRenderingContext2D, d: LayerCtx) {
@@ -670,7 +586,7 @@ function drawWave(ctx: CanvasRenderingContext2D, d: LayerCtx) {
   }
 }
 
-/** 激光：两道细长的光束扫过球体，声越大转得越快、越长。 */
+/** 激光（内圈）：两道细长的光束在球芯内部扫过，声越大越亮、越长。 */
 function drawLaser(ctx: CanvasRenderingContext2D, d: LayerCtx) {
   const { center, unit, bands, colors, level, live, time } = d;
 
@@ -680,7 +596,8 @@ function drawLaser(ctx: CanvasRenderingContext2D, d: LayerCtx) {
 
   const speed = 0.0022 + level * 0.006 + spread * 0.004;
   const angle = -Math.PI / 2 + time * speed;
-  const half = (26 + level * 12) * unit;
+  // 内圈必须收在球芯范围内，避免沿用外圈版本的半径后被画布或其它层裁掉。
+  const half = (15 + level * 8) * unit;
   const beamColor = slotColor(colors, 1);
 
   ctx.save();
@@ -696,7 +613,7 @@ function drawLaser(ctx: CanvasRenderingContext2D, d: LayerCtx) {
     // 细长的光束很容易"糊掉"，所以给足不透明度与线宽
     ctx.globalAlpha = 0.92;
     ctx.strokeStyle = beam;
-    ctx.lineWidth = Math.max(1.8, (1.8 + level * 2.6) * unit);
+    ctx.lineWidth = Math.max(1.2, (1.4 + level * 2.2) * unit);
     ctx.beginPath();
     ctx.moveTo(-dx, -dy);
     ctx.lineTo(dx, dy);
@@ -706,7 +623,7 @@ function drawLaser(ctx: CanvasRenderingContext2D, d: LayerCtx) {
     ctx.globalAlpha = 1;
     ctx.fillStyle = lighten(beamColor, 0.35);
     ctx.beginPath();
-    ctx.arc(dx, dy, (1.5 + level * 2.6) * unit, 0, TAU);
+    ctx.arc(dx, dy, (1.1 + level * 2.1) * unit, 0, TAU);
     ctx.fill();
   }
   ctx.restore();
@@ -715,19 +632,15 @@ function drawLaser(ctx: CanvasRenderingContext2D, d: LayerCtx) {
 /* ------------------------------------------------------------ 样式分发表 */
 
 const innerStyleDraw: Record<string, (ctx: CanvasRenderingContext2D, d: LayerCtx) => void> = {
-  core: drawCore,
   pulse: drawPulse,
-  particles: drawParticles,
-  ripple: drawRipple,
   vu: drawVu,
+  laser: drawLaser,
   none: drawNothing,
 };
 
 const outerStyleDraw: Record<string, (ctx: CanvasRenderingContext2D, d: LayerCtx) => void> = {
   ring: drawRing,
-  bars: drawBars,
   wave: drawWave,
-  laser: drawLaser,
   none: drawNothing,
 };
 

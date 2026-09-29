@@ -6,8 +6,8 @@
  * 重画形状，换样式也不用重新配一遍色。
  *
  * 样式分**内圈**与**外圈**两层：
- * * 内圈画球体里面的东西（球芯、脉冲、粒子、涟漪）；
- * * 外圈画球体外面的东西（环柱、柱阵、示波、激光）。
+ * * 内圈画球体里面的东西（脉冲、VU 表或空层）；
+ * * 外圈画球体外面的东西（环柱、示波、激光或空层）。
  *
  * 两层各选一个叠在一起，而且**各绑各的数据源** —— 同一颗球可以"外面跟频谱跳、
  * 里面跟音量呼吸"。
@@ -31,7 +31,19 @@
  * 名字与说明都在 `i18n.ts`（键名 `ballStyle.source.<id>` / `...hint.<id>`），
  * 这里只留 id，顺带当一份"合法取值"的清单。
  */
-export type BallDataSource = "spectrum" | "wave" | "adaptive" | "level" | "peak";
+import { BALL_STYLE_MODULES } from "./ball-styles";
+import type { BallStyleLocale } from "./ball-styles/types";
+import type { BallDataSource, BallLayer, BallStyle } from "./ball-styles/types";
+
+export type { BallDataSource, BallLayer, BallStyle } from "./ball-styles/types";
+
+export type BallStyleLocales = Record<string, BallStyleLocale>;
+
+export { BALL_STYLE_MODULES } from "./ball-styles";
+
+export const BALL_STYLE_LOCALES: BallStyleLocales = Object.fromEntries(
+  BALL_STYLE_MODULES.map(({ style, locale }) => [style.id, locale]),
+);
 
 export const BALL_DATA_SOURCES: BallDataSource[] = [
   "spectrum",
@@ -43,56 +55,24 @@ export const BALL_DATA_SOURCES: BallDataSource[] = [
 
 export const DEFAULT_BALL_DATA_SOURCE: BallDataSource = "adaptive";
 
-/** 小球的那两层。 */
-export type BallLayer = "inner" | "outer";
-
-/** 样式本体。名字与说明的中英文在 `i18n.ts`（键名 `ballStyle.<id>`）。 */
-export interface BallStyle {
-  id: string;
-  /** 画在球体里层还是外层。 */
-  layer: BallLayer;
-  /** 默认跟着哪种数据律动。 */
-  mode: BallDataSource;
-  /** 这套画法要几个颜色槽；用户颜色不够时复用最后一槽。 */
-  colorSlots: number;
-}
-
 /**
  * 内圈样式：画在球体里面。
  *
  * 「无」是把这一圈整个关掉 —— 只想要外面一圈环柱、球体保持干净时用它。
  */
 export const BALL_INNER_STYLES: BallStyle[] = [
-  // 球芯：一颗静态的渐变球，什么都不跟，就放在那里
-  { id: "core", layer: "inner", mode: "level", colorSlots: 1 },
-  // 脉冲：球芯 + 随音量收放的同心圈
-  { id: "pulse", layer: "inner", mode: "level", colorSlots: 2 },
-  // 粒子：一圈细小光点被音乐推开，安静时轻轻呼吸
-  { id: "particles", layer: "inner", mode: "spectrum", colorSlots: 3 },
-  // 涟漪：声压一圈圈荡开，响度越大越密越亮
-  { id: "ripple", layer: "inner", mode: "level", colorSlots: 3 },
-  // VU 表：球体里一块老式指针表，指针跟着响度摆（三个颜色：刻度 / 指针 / 红区与峰值针）
-  { id: "vu", layer: "inner", mode: "level", colorSlots: 3 },
-  { id: "none", layer: "inner", mode: "adaptive", colorSlots: 0 },
+  ...BALL_STYLE_MODULES.filter((module) => module.style.layer === "inner").map((module) => module.style),
 ];
 
 /** 外圈样式：画在球体外面。 */
 export const BALL_OUTER_STYLES: BallStyle[] = [
-  // 环柱：经典环形频谱，一圈柱子的长度就是各频段的能量
-  { id: "ring", layer: "outer", mode: "spectrum", colorSlots: 3 },
-  // 柱阵：球体正面一列均衡器柱，低音在左、高音在右
-  { id: "bars", layer: "outer", mode: "spectrum", colorSlots: 3 },
-  // 示波：把波形卷成一圈，直接描出峰谷包络的起伏
-  { id: "wave", layer: "outer", mode: "wave", colorSlots: 2 },
-  // 激光：两道细长的激光线扫过球体，鼓点越强转得越快
-  { id: "laser", layer: "outer", mode: "wave", colorSlots: 2 },
-  { id: "none", layer: "outer", mode: "adaptive", colorSlots: 0 },
+  ...BALL_STYLE_MODULES.filter((module) => module.style.layer === "outer").map((module) => module.style),
 ];
 
 /** 两圈合起来 —— 遍历界面时用它。 */
 export const BALL_STYLES: BallStyle[] = [...BALL_INNER_STYLES, ...BALL_OUTER_STYLES];
 
-export const DEFAULT_BALL_INNER_STYLE = "core";
+export const DEFAULT_BALL_INNER_STYLE = "pulse";
 export const DEFAULT_BALL_OUTER_STYLE = "ring";
 
 /* ---------------------------------------------------------------- 应用 */

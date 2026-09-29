@@ -115,17 +115,15 @@ body.ball-body {
  * 形状全在画布上（`ball-render.ts`），CSS 这边只处理少数跟样式有关的细节。
  */
 
-/* 内圈没画"球体"的样式（涟漪 / VU 表 / 无），待机音符会跟光晕打架，索性收掉 */
-html[data-ball-inner="ripple"] .orb-glyph,
+/* 内圈没画"球体"的样式（VU 表 / 无），待机音符会跟光晕打架，索性收掉 */
 html[data-ball-inner="vu"] .orb-glyph,
 html[data-ball-inner="none"] .orb-glyph {
   opacity: 0.28;
 }
 
 /* 待机时也在动的样式，交互过渡放慢一点，别让人以为卡住了 */
-html[data-ball-inner="particles"] .orb,
-html[data-ball-inner="ripple"] .orb,
 html[data-ball-inner="vu"] .orb,
+html[data-ball-inner="laser"] .orb,
 html[data-ball-outer="wave"] .orb {
   transition-duration: 0.3s;
 }

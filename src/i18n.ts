@@ -10,6 +10,7 @@
  */
 
 import type { Bi } from "./theme";
+import { BALL_STYLE_LOCALES } from "./ball-style";
 
 export type Language = "zh-CN" | "en-US";
 
@@ -249,14 +250,8 @@ const ZH: Dict = {
   "ballStyle.source.hint.peak": "跟峰值：整帧一个数，鼓点一到就顶上去，比响度更跳。",
 
   /* 内圈 */
-  "ballStyle.core": "球芯",
-  "ballStyle.hint.core": "一颗静态的渐变球，什么都不跟，安静地待在那里。",
   "ballStyle.pulse": "脉冲",
   "ballStyle.hint.pulse": "球芯之外再放几圈随音量涨落的同心圈。",
-  "ballStyle.particles": "粒子",
-  "ballStyle.hint.particles": "一圈细小光点被音乐推开，安静时轻轻呼吸。",
-  "ballStyle.ripple": "涟漪",
-  "ballStyle.hint.ripple": "声压一圈圈荡开，响度越大涟漪越密越亮。",
   "ballStyle.vu": "VU 表",
   "ballStyle.hint.vu": "老式球形VU表，指针跟着响度摆动。",
   "ballStyle.none": "无",
@@ -265,12 +260,8 @@ const ZH: Dict = {
   /* 外圈 */
   "ballStyle.ring": "环柱",
   "ballStyle.hint.ring": "经典环形频谱：一圈柱子的长度就是各频段的能量。",
-  "ballStyle.bars": "柱阵",
-  "ballStyle.hint.bars": "球体正面一列均衡器柱，低音在左、高音在右。",
   "ballStyle.wave": "示波",
   "ballStyle.hint.wave": "把波形卷成一圈，直接描出峰谷包络的起伏。",
-  "ballStyle.laser": "激光",
-  "ballStyle.hint.laser": "两道细长的激光线扫过球体，鼓点越强转得越快。",
 
   /* 随音频律动缩放的算法（id 来自 ball-pulse.ts） */
   "ballPulse.none": "不缩放",
@@ -531,14 +522,8 @@ const EN: Dict = {
     "Peak: one number per frame, jumping up on every beat — twitchier than loudness.",
 
   /* Inner layer */
-  "ballStyle.core": "Core",
-  "ballStyle.hint.core": "A plain gradient ball that follows nothing — just sits there.",
   "ballStyle.pulse": "Pulse",
   "ballStyle.hint.pulse": "The core plus a couple of rings that swell with the volume.",
-  "ballStyle.particles": "Particles",
-  "ballStyle.hint.particles": "A ring of specks pushed outward by the music, breathing when idle.",
-  "ballStyle.ripple": "Ripple",
-  "ballStyle.hint.ripple": "Pressure ripples outward; louder means denser and brighter.",
   "ballStyle.vu": "VU meter",
   "ballStyle.hint.vu": "An old-school needle meter: a shallow arc scale, long needle swinging with volume.",
   "ballStyle.none": "None",
@@ -547,12 +532,8 @@ const EN: Dict = {
   /* Outer layer */
   "ballStyle.ring": "Ring bars",
   "ballStyle.hint.ring": "The classic: a ring of bars whose length is each band's energy.",
-  "ballStyle.bars": "Bar stack",
-  "ballStyle.hint.bars": "A flat equaliser across the ball: bass on the left, treble on the right.",
   "ballStyle.wave": "Oscilloscope",
   "ballStyle.hint.wave": "Wraps the envelope into a ring and traces it point by point.",
-  "ballStyle.laser": "Laser",
-  "ballStyle.hint.laser": "Two thin beams sweep across the ball, spinning faster on strong beats.",
 
   /* Scaling algorithms (ids come from ball-pulse.ts) */
   "ballPulse.none": "Off",
@@ -569,6 +550,14 @@ const EN: Dict = {
   "ballPulse.hint.sway":
     "The stronger the low end, the faster and wider it sways — a gentle rock on the beat.",
 };
+
+/* 每个悬浮球样式目录自带文案；这里把它们注册到现有翻译表，新增样式无需修改本文件。 */
+for (const [id, locale] of Object.entries(BALL_STYLE_LOCALES)) {
+  ZH[`ballStyle.${id}`] ??= locale.zh;
+  ZH[`ballStyle.hint.${id}`] ??= locale.hintZh;
+  EN[`ballStyle.${id}`] ??= locale.en;
+  EN[`ballStyle.hint.${id}`] ??= locale.hintEn;
+}
 
 const DICTS: Record<Language, Dict> = { "zh-CN": ZH, "en-US": EN };
 
