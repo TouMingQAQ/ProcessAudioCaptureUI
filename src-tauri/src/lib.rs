@@ -19,6 +19,7 @@
 mod ball;
 mod capture;
 mod dsp;
+mod filter;
 mod monitor;
 mod pac;
 mod prefs;
@@ -46,6 +47,10 @@ pub struct AppState {
     auto_follow: AtomicBool,
     /// 最近一次使用的"顺便录 WAV"设置，自动跟随切换时会沿用。
     record_wav: AtomicBool,
+    /// 窗口检测名单（白 / 黑）。扫描线程每 1.2 秒就要用一次，每次都读文件撑不住，
+    /// 所以跟 `auto_follow` 一样在状态里存一份，改设置时同步过来。
+    window_allowlist: Mutex<Vec<String>>,
+    window_blocklist: Mutex<Vec<String>>,
     /// 悬浮球的可交互区域与拖动状态（悬停检测线程要用，见 [`ball`]）。
     ball: ball::BallInteraction,
 }
@@ -112,6 +117,19 @@ impl AppState {
 
     pub(crate) fn record_wav(&self) -> bool {
         self.record_wav.load(Ordering::Relaxed)
+    }
+
+    /// 窗口名单快照（`(白名单, 黑名单)`）。克隆一份出去，别拿着锁去跑枚举。
+    pub(crate) fn window_lists(&self) -> (Vec<String>, Vec<String>) {
+        (
+            lock(&self.window_allowlist).clone(),
+            lock(&self.window_blocklist).clone(),
+        )
+    }
+
+    pub(crate) fn set_window_lists(&self, allow: &[String], block: &[String]) {
+        *lock(&self.window_allowlist) = allow.to_vec();
+        *lock(&self.window_blocklist) = block.to_vec();
     }
 }
 
@@ -314,7 +332,10 @@ async fn start_capture_best(
         let state = app_for_pick.state::<AppState>();
         let library = ensure_library(&app_for_pick, &state)?;
         let result = sessions::list_audio_windows(&library)?;
-        Ok(monitor::pick_candidate(&result.windows, None, std::process::id()))
+        // 名单外的窗口不参与"自动挑一个"，不然刚屏蔽掉的进程会被悬浮球又捡回来
+        let (allow, block) = state.window_lists();
+        let selectable = filter::allowed_windows(&result.windows, &allow, &block);
+        Ok(monitor::pick_candidate(&selectable, None, std::process::id()))
     })
     .await
     .map_err(|e| format!("枚举窗口异常：{e}"))??;
@@ -378,7 +399,10 @@ pub(crate) fn persist_auto_follow(app: &AppHandle, enabled: bool) {
 
 #[tauri::command]
 fn get_settings(app: AppHandle) -> Settings {
-    prefs::load(&app)
+    let mut settings = prefs::load(&app);
+    // 本应用自己在黑名单里是锁定项：界面照着这份显示就行，不用自己再查一遍
+    filter::ensure_self_blocked(&mut settings);
+    settings
 }
 
 /// 保存设置：先落盘，再广播。落盘失败就直接返回错误，界面不会误以为已经存住。
@@ -388,14 +412,29 @@ fn save_settings(
     state: State<'_, AppState>,
     settings: Settings,
 ) -> Result<Settings, String> {
+    // 名单在这里统一收拾（去空白、转小写、去重、补上锁定的自己），广播出去的就是最终形态，
+    // 四个窗口不必各算各的
+    let mut settings = settings;
+    filter::normalize(&mut settings);
+
     prefs::store(&app, &settings)?;
 
-    // 这两个开关的真身在 AppState 上（采集线程 / 自动跟随都要读），顺手同步过去
+    // 这几个开关的真身在 AppState 上（采集线程 / 自动跟随 / 扫描线程都要读），顺手同步过去
     state.auto_follow.store(settings.auto_follow, Ordering::Relaxed);
     state.record_wav.store(settings.record_wav, Ordering::Relaxed);
+    state.set_window_lists(&settings.window_allowlist, &settings.window_blocklist);
 
     prefs::broadcast(&app, &settings);
     Ok(settings)
+}
+
+/// 本应用自己的进程名（小写，带扩展名）。
+///
+/// 界面拿它把黑名单里那一条标成「本程序」并锁住删除按钮 —— 它是固定项，后端保证一直在
+/// 名单里，不需要用户配，也删不掉。
+#[tauri::command]
+fn self_process_name() -> String {
+    filter::self_process_name().to_string()
 }
 
 /* -------------------------------------------------------------- 悬浮球窗口 */
@@ -543,6 +582,7 @@ pub fn run() {
                 let state = app.state::<AppState>();
                 state.auto_follow.store(settings.auto_follow, Ordering::Relaxed);
                 state.record_wav.store(settings.record_wav, Ordering::Relaxed);
+                state.set_window_lists(&settings.window_allowlist, &settings.window_blocklist);
             }
 
             // 悬浮球定位后显示，避免先出现在左上角再跳过去
@@ -569,6 +609,7 @@ pub fn run() {
             start_capture_best,
             stop_capture,
             set_auto_follow,
+            self_process_name,
             set_ball_visible,
             set_ball_geometry,
             set_ball_dragging,

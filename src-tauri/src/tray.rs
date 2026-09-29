@@ -16,7 +16,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, Tray
 use tauri::{AppHandle, Emitter, Manager, Wry};
 
 use crate::monitor::{CaptureChanged, CAPTURE_CHANGED_EVENT};
-use crate::{ensure_library, monitor, sessions, start_active, stop_active, AppState};
+use crate::{ensure_library, filter, monitor, sessions, start_active, stop_active, AppState};
 
 const TRAY_ID: &str = "pac-tray";
 const APP_NAME: &str = "进程音频监听";
@@ -223,7 +223,10 @@ fn toggle_capture(app: &AppHandle) {
                 return;
             }
         };
-        let Some(target) = monitor::pick_candidate(&result.windows, None, std::process::id()) else {
+        // 和悬浮球、自动跟随一样先过名单：被拉黑的进程不该从托盘里被捡回来
+        let (allow, block) = state.window_lists();
+        let selectable = filter::allowed_windows(&result.windows, &allow, &block);
+        let Some(target) = monitor::pick_candidate(&selectable, None, std::process::id()) else {
             notify(
                 &app,
                 None,

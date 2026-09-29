@@ -19,6 +19,7 @@ import { applyI18n, t } from "./i18n";
 import { bindSettings } from "./settings";
 import { createSettingsPanel, type SettingsPanel } from "./settings-panel";
 import { Visualizer, formatDb } from "./visualizer";
+import { isWindowAllowed, loadSelfName } from "./window-list";
 
 /* ---------------------------------------------------------------- DOM 引用 */
 
@@ -38,6 +39,7 @@ const filterAudio = $<HTMLInputElement>("filter-audio");
 const recordWav = $<HTMLInputElement>("record-wav");
 const windowList = $<HTMLDivElement>("window-list");
 const windowCount = $<HTMLSpanElement>("window-count");
+const blockedNote = $<HTMLDivElement>("list-blocked");
 const warningsBox = $<HTMLDivElement>("warnings");
 const nowCapturing = $<HTMLDivElement>("now-capturing");
 const sessionState = $<HTMLSpanElement>("session-state");
@@ -126,7 +128,12 @@ function renderWindowList() {
   const keyword = searchInput.value.trim().toLowerCase();
   const onlyAudio = filterAudio.checked;
 
-  const list = allWindows.filter((win) => {
+  // 名单外的窗口（黑名单 + 白名单外的）在这里就挡掉：后端那份判定管的是"能不能被自动
+  // 选中"，列表该不该显示归前端管 —— 这样改完名单立刻生效，不必重新枚举一遍
+  const listed = allWindows.filter((win) => isWindowAllowed(win, settings));
+  const blocked = allWindows.length - listed.length;
+
+  const list = listed.filter((win) => {
     if (onlyAudio && win.sessionState !== "active") return false;
     if (!keyword) return true;
     return (
@@ -136,13 +143,31 @@ function renderWindowList() {
     );
   });
 
-  windowCount.textContent = t("list.count", { shown: list.length, total: allWindows.length });
+  windowCount.textContent = t("list.count", { shown: list.length, total: listed.length });
+
+  // 选中的窗口要是被名单挡掉了，选中就作废 —— 否则还能从「开始采集」把它采起来。
+  // 正在采集的那个例外：它得留着选中状态，用户才点得到「停止采集」。
+  if (selectedPid !== null && selectedPid !== capturingPid) {
+    if (!listed.some((win) => win.pid === selectedPid)) {
+      selectedPid = null;
+      renderSelected();
+    }
+  }
+
+  blockedNote.hidden = blocked === 0;
+  blockedNote.textContent = t("list.blocked", { n: blocked });
+
   windowList.replaceChildren();
 
   if (list.length === 0) {
     const empty = document.createElement("div");
     empty.className = "empty";
-    empty.textContent = allWindows.length === 0 ? t("list.none") : t("list.noMatch");
+    empty.textContent =
+      listed.length > 0
+        ? t("list.noMatch")
+        : blocked > 0
+          ? t("list.allBlocked")
+          : t("list.none");
     windowList.append(empty);
     return;
   }
@@ -185,11 +210,55 @@ function renderWindowList() {
       procEl.after(badge);
     }
     item.querySelector(".win-state")!.textContent = sessionLabel(win);
+    item.querySelector(".win-sub")!.append(blockButton(win));
 
     item.addEventListener("click", () => selectWindow(win.pid));
     frag.append(item);
   }
   windowList.append(frag);
+}
+
+/**
+ * 卡片上的「加入黑名单」小按钮。
+ *
+ * 用的不是 `<button>`：整张卡片本身就是按钮，里面再嵌一个是非法结构（点它会连带触发
+ * 选中）。所以这里是个带 `role` 的 `<span>`，自己处理点击与回车 / 空格。
+ */
+function blockButton(win: AudioWindowInfo): HTMLElement {
+  const el = document.createElement("span");
+  el.className = "win-block";
+  el.setAttribute("role", "button");
+  el.tabIndex = 0;
+  el.title = t("list.block", { name: win.processName });
+  el.textContent = "⊘";
+
+  const block = (event: Event) => {
+    // 别让点击冒泡到卡片上：那样会顺手把它选中
+    event.preventDefault();
+    event.stopPropagation();
+    void blockProcess(win.processName);
+  };
+  el.addEventListener("click", block);
+  el.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") block(event);
+  });
+  return el;
+}
+
+/** 把一个进程名加进黑名单：它连同该进程的所有窗口一起从列表里消失。 */
+async function blockProcess(processName: string) {
+  const name = processName.trim().toLowerCase();
+  if (!name) return;
+  if (settings.windowBlocklist.includes(name)) {
+    log(t("list.alreadyBlocked", { name }), "warn");
+    return;
+  }
+  try {
+    await prefs.patch({ windowBlocklist: [...settings.windowBlocklist, name] });
+    log(t("list.blockedLog", { name }));
+  } catch (err) {
+    log(t("list.blockFailed", { name, err: String(err) }), "error");
+  }
 }
 
 function renderSelected() {
@@ -434,6 +503,8 @@ async function bootstrap() {
   settings = await prefs.load();
   // 画布是在模块顶层就建好的（那会儿主题还没读回来），这里按刚生效的主题补取一次色
   visualizer.refreshTheme();
+  // 本应用的进程名：列表过滤要用它，设置面板里那条锁定项也靠它认出来
+  await loadSelfName();
 
   panel = createSettingsPanel({
     prefs,
@@ -486,6 +557,8 @@ async function bootstrap() {
       recordWav.checked = next.recordWav;
       followMain.checked = next.autoFollow;
       autoFollow = next.autoFollow;
+      // 名单变了得重过一遍列表：刚被挡掉的窗口要立刻消失
+      renderWindowList();
       refreshTexts();
       panel?.sync(next);
     }),

@@ -30,6 +30,7 @@ import {
 } from "./ball-pulse";
 import { bi, t } from "./i18n";
 import type { SettingsBinding } from "./settings";
+import { getSelfName } from "./window-list";
 import {
   APP_THEMES,
   BALL_COLOR_PRESETS,
@@ -294,6 +295,14 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
   const knExpected = $<HTMLSpanElement>("kn-expected");
   const knCandidates = $<HTMLUListElement>("kn-candidates");
 
+  /* ------------------------------------------------------------- 窗口名单 */
+  const allowInput = $<HTMLInputElement>("allow-input");
+  const allowAddBtn = $<HTMLButtonElement>("allow-add");
+  const allowItems = $<HTMLUListElement>("allow-items");
+  const blockInput = $<HTMLInputElement>("block-input");
+  const blockAddBtn = $<HTMLButtonElement>("block-add");
+  const blockItems = $<HTMLUListElement>("block-items");
+
   let settings: Settings = prefs.get();
   let opened = false;
 
@@ -482,6 +491,115 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
     pulseNote.textContent = t(`ballPulse.hint.${settings.ballPulseAlgorithm}`);
   }
 
+  /* ------------------------------------------------------------- 窗口名单 */
+
+  /**
+   * 名单里的一条。
+   *
+   * `locked` 那条就是本应用自己（`getSelfName()`）：后端把"采集自己被挡掉"做成硬规则，
+   * 界面只负责展示 —— 删除按钮直接禁用，点不动比点了报错友好。
+   */
+  function nameItem(name: string, kind: "allow" | "block"): HTMLLIElement {
+    const item = document.createElement("li");
+    const locked = kind === "block" && name === getSelfName();
+    item.className = "name-item";
+    if (locked) item.classList.add("is-locked");
+
+    const text = document.createElement("span");
+    text.className = "name-text";
+    text.textContent = name;
+    item.append(text);
+
+    if (locked) {
+      const badge = document.createElement("span");
+      badge.className = "name-badge";
+      badge.textContent = t("settings.window.self");
+      badge.title = t("settings.window.selfTitle");
+      item.append(badge);
+    }
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "name-remove";
+    remove.textContent = "✕";
+    remove.disabled = locked;
+    remove.title = locked ? t("settings.window.selfTitle") : t("settings.window.remove", { name });
+    remove.addEventListener("click", () => void removeName(name, kind));
+    item.append(remove);
+
+    return item;
+  }
+
+  function renderNameLists() {
+    const fill = (host: HTMLUListElement, names: string[], kind: "allow" | "block") => {
+      if (names.length === 0) {
+        const empty = document.createElement("li");
+        empty.className = "name-empty";
+        empty.textContent = t("settings.window.empty");
+        host.replaceChildren(empty);
+        return;
+      }
+      const frag = document.createDocumentFragment();
+      for (const name of names) frag.append(nameItem(name, kind));
+      host.replaceChildren(frag);
+    };
+    fill(allowItems, settings.windowAllowlist, "allow");
+    fill(blockItems, settings.windowBlocklist, "block");
+  }
+
+  /** 名单里加一条。去重与转小写由 `normalize` 兜底，这里只管提示与落盘。 */
+  async function addName(kind: "allow" | "block", raw: string): Promise<boolean> {
+    const name = raw.trim().toLowerCase();
+    if (!name) return false;
+
+    const list = kind === "allow" ? settings.windowAllowlist : settings.windowBlocklist;
+    if (list.includes(name)) {
+      log?.(t("settings.window.duplicate", { name }), "warn");
+      return false;
+    }
+
+    const next = [...list, name];
+    try {
+      await prefs.patch(kind === "allow" ? { windowAllowlist: next } : { windowBlocklist: next });
+      log?.(t("settings.window.added", { name }));
+      return true;
+    } catch (err) {
+      log?.(t("settings.window.saveFailed", { err: String(err) }), "error");
+      return false;
+    }
+  }
+
+  async function removeName(name: string, kind: "allow" | "block") {
+    // 黑名单里的本程序是后端的硬规则，删掉也会被补回来 —— 干脆当没这回事
+    if (kind === "block" && name === getSelfName()) return;
+
+    const list = kind === "allow" ? settings.windowAllowlist : settings.windowBlocklist;
+    const next = list.filter((entry) => entry !== name);
+    try {
+      await prefs.patch(kind === "allow" ? { windowAllowlist: next } : { windowBlocklist: next });
+    } catch (err) {
+      log?.(t("settings.window.saveFailed", { err: String(err) }), "error");
+    }
+  }
+
+  const wireNameInput = (
+    kind: "allow" | "block",
+    input: HTMLInputElement,
+    button: HTMLButtonElement,
+  ) => {
+    const submit = () => {
+      void addName(kind, input.value).then((added) => {
+        if (added) input.value = "";
+      });
+    };
+    button.addEventListener("click", submit);
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") submit();
+    });
+  };
+  wireNameInput("allow", allowInput, allowAddBtn);
+  wireNameInput("block", blockInput, blockAddBtn);
+
   /* -------------------------------------------------------------- 控件同步 */
 
   function renderControls() {
@@ -504,6 +622,7 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
     renderStyleGrids();
     renderSourceGroups();
     renderMotion();
+    renderNameLists();
   }
 
   function sync(next: Settings) {

@@ -65,6 +65,8 @@
             <div class="empty" data-i18n="list.enumerating">正在枚举窗口…</div>
           </div>
 
+          <div id="list-blocked" class="list-note" hidden></div>
+
           <div id="warnings" class="warnings" hidden></div>
 
           <!-- 左下角：设置入口 -->
@@ -171,6 +173,10 @@
             <button class="settings-tab" type="button" data-tab="ball" role="tab">
               <span class="tab-glyph" aria-hidden="true">◎</span>
               <span data-i18n="settings.tab.ball">悬浮球</span>
+            </button>
+            <button class="settings-tab" type="button" data-tab="windows" role="tab">
+              <span class="tab-glyph" aria-hidden="true">⊘</span>
+              <span data-i18n="settings.tab.windows">窗口名单</span>
             </button>
             <button class="settings-tab" type="button" data-tab="kernel" role="tab">
               <span class="tab-glyph" aria-hidden="true">⛭</span>
@@ -357,6 +363,64 @@
                     <div id="ball-pulse-group" class="segmented segmented-sm" role="group"></div>
                   </div>
                   <p id="ball-pulse-note" class="set-note"></p>
+                </div>
+              </section>
+            </div>
+
+            <!-- ------------------------------------------------ 窗口名单 -->
+            <div class="settings-pane" data-pane="windows">
+              <section class="set-block">
+                <div class="set-block-head">
+                  <h3 data-i18n="settings.window.title">窗口名单</h3>
+                  <p data-i18n="settings.window.hint">
+                    按进程名匹配（如 chrome.exe），不区分大小写。黑名单里的进程不会出现在窗口列表里，也不会被自动跟随或悬浮球的「开始采集」选中；白名单留空表示不限制，一旦填了就只检测名单里的进程。黑名单优先于白名单。
+                  </p>
+                </div>
+
+                <div class="name-lists">
+                  <div class="name-list">
+                    <div class="name-list-head">
+                      <h4 data-i18n="settings.window.allow">白名单</h4>
+                      <span class="name-list-note" data-i18n="settings.window.allowNote">空 = 不限制</span>
+                    </div>
+                    <div class="name-input">
+                      <input
+                        id="allow-input"
+                        class="input"
+                        type="text"
+                        spellcheck="false"
+                        autocomplete="off"
+                        data-i18n-placeholder="settings.window.placeholder"
+                        placeholder="进程名，如 chrome.exe"
+                      />
+                      <button id="allow-add" class="btn btn-ghost" type="button" data-i18n="settings.window.add">
+                        添加
+                      </button>
+                    </div>
+                    <ul id="allow-items" class="name-items"></ul>
+                  </div>
+
+                  <div class="name-list">
+                    <div class="name-list-head">
+                      <h4 data-i18n="settings.window.block">黑名单</h4>
+                      <span class="name-list-note" data-i18n="settings.window.blockNote">永远挡住</span>
+                    </div>
+                    <div class="name-input">
+                      <input
+                        id="block-input"
+                        class="input"
+                        type="text"
+                        spellcheck="false"
+                        autocomplete="off"
+                        data-i18n-placeholder="settings.window.placeholder"
+                        placeholder="进程名，如 chrome.exe"
+                      />
+                      <button id="block-add" class="btn btn-ghost" type="button" data-i18n="settings.window.add">
+                        添加
+                      </button>
+                    </div>
+                    <ul id="block-items" class="name-items"></ul>
+                  </div>
                 </div>
               </section>
             </div>

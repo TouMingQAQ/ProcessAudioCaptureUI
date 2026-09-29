@@ -39,6 +39,10 @@ export const DEFAULT_SETTINGS: Settings = {
   autoFollow: false,
   recordWav: false,
 
+  // 窗口名单：空 = 不限制。本应用自己的进程名由后端保证永远在黑名单里。
+  windowAllowlist: [],
+  windowBlocklist: [],
+
   // 悬浮球的几项都用"空值 = 还没配过"当哨兵：`normalize` 会按旧配置或默认值补上。
   // 这样做是为了让老版本的 settings.json 平滑升级 —— 见 [`normalizeBall`]。
   ballColors: [],
@@ -64,6 +68,23 @@ export const DEFAULT_SETTINGS: Settings = {
 function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
   const n = typeof value === "number" && Number.isFinite(value) ? value : fallback;
   return Math.min(max, Math.max(min, n));
+}
+
+/**
+ * 进程名收敛：去空白、统一小写、去重。
+ *
+ * 大小写不敏感是有意的 —— Windows 进程名本就如此，用户填 `Chrome.EXE` 也该命中。规则与
+ * Rust 侧的 `filter::tidy` 完全一致，两边不会出现"列表里过滤了、自动跟随没过滤"。
+ */
+function tidyNames(list: unknown): string[] {
+  if (!Array.isArray(list)) return [];
+  const out: string[] = [];
+  for (const entry of list) {
+    if (typeof entry !== "string") continue;
+    const name = entry.trim().toLowerCase();
+    if (name && !out.includes(name)) out.push(name);
+  }
+  return out;
 }
 
 /**
@@ -115,6 +136,9 @@ export function normalize(raw: Partial<Settings> | null | undefined): Settings {
   if (merged.language !== "zh-CN" && merged.language !== "en-US") {
     merged.language = "zh-CN";
   }
+
+  merged.windowAllowlist = tidyNames(merged.windowAllowlist);
+  merged.windowBlocklist = tidyNames(merged.windowBlocklist);
 
   normalizeBall(merged);
   return merged;

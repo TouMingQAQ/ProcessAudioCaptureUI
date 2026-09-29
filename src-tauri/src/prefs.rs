@@ -30,6 +30,15 @@ pub struct Settings {
     /// 采集时是否默认录制 WAV。
     pub record_wav: bool,
 
+    /* --------------------------------------------------------- 窗口名单 */
+    /// 窗口检测白名单（进程名，小写）。**空数组 = 不限制**：除黑名单外都能被检测到；
+    /// 一旦非空，就只有名单里的进程能被采集。
+    pub window_allowlist: Vec<String>,
+    /// 窗口检测黑名单（进程名，小写）。这些进程不会出现在窗口列表里，也不会被自动跟随
+    /// 或悬浮球的「开始采集」选中。本应用自己的进程名永远在其中（见
+    /// `filter::ensure_self_blocked`），落盘前后都由后端保证。
+    pub window_blocklist: Vec<String>,
+
     /* ----------------------------------------------------------- 悬浮球 */
     /// 用户自定义色槽（有序，见 `theme.ts` 的 `BALL_COLOR_PRESETS` 取初始值）。
     /// **空数组表示还没配过**：界面会按 `ball_theme` 或默认色补一份，不写死在这里，
@@ -78,6 +87,9 @@ impl Default for Settings {
             language: "zh-CN".to_string(),
             auto_follow: false,
             record_wav: false,
+
+            window_allowlist: Vec::new(),
+            window_blocklist: Vec::new(),
 
             ball_colors: Vec::new(),
             ball_inner_style: String::new(),

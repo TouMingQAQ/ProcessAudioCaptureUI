@@ -15,6 +15,7 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::filter;
 use crate::sessions::{self, AudioWindowInfo, MediaInfo};
 use crate::{ensure_library, start_active, stop_active, AppState};
 
@@ -66,6 +67,9 @@ pub struct CaptureChanged {
 /// 挑一个"值得监听"的窗口：会话处于 active，峰值最高，且不是自己。
 ///
 /// `exclude` 用来排除当前已经在采集的 PID，这样候选永远是"另一个源"。
+///
+/// 名单过滤是**调用方**的事（`filter::allowed_windows`）：被拉黑的窗口根本不该走到这里，
+/// 而这里也只管挑峰值最高的那一个。
 pub fn pick_candidate(
     windows: &[AudioWindowInfo],
     exclude: Option<u32>,
@@ -121,9 +125,14 @@ fn run(app: AppHandle) {
 
         let current_pid = state.captured_pid();
 
+        // "正在采集的那个"照旧从完整列表里找：名单只决定谁**能被挑中**。用户把正在采的
+        // 进程拉黑，意思是"以后别再选它"，不是"立刻把手上这条掐掉"。
         let capturing = current_pid
             .and_then(|pid| result.windows.iter().find(|w| w.pid == pid).cloned());
-        let candidate = pick_candidate(&result.windows, current_pid, self_pid);
+
+        let (allow, block) = state.window_lists();
+        let selectable = filter::allowed_windows(&result.windows, &allow, &block);
+        let candidate = pick_candidate(&selectable, current_pid, self_pid);
         let auto_follow = state.auto_follow();
 
         let status = state.capture_status();

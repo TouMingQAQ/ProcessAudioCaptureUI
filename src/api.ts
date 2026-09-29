@@ -119,6 +119,14 @@ export interface Settings {
   autoFollow: boolean;
   recordWav: boolean;
 
+  /** 窗口检测白名单（进程名，小写）。空数组 = 不限制；非空则只有名单里的进程能被检测到。 */
+  windowAllowlist: string[];
+  /**
+   * 窗口检测黑名单（进程名，小写）。这些进程不进窗口列表，也不会被自动跟随或悬浮球的
+   * 「开始采集」选中。本应用自己的进程名永远在其中（后端保证，界面上那一条锁着删不掉）。
+   */
+  windowBlocklist: string[];
+
   /** 用户自定义色槽（有序）。空数组 = 还没配过，界面会按 `ballTheme` 或默认色补一份。 */
   ballColors: string[];
   /** 内圈样式 id（见 `ball-style.ts` 的 `BALL_INNER_STYLES`）。空 = 还没配过。 */
@@ -198,6 +206,8 @@ export const api = {
     invoke<StartReport>("start_capture_best", { recordWav }),
   stopCapture: () => invoke<StopReport | null>("stop_capture"),
   setAutoFollow: (enabled: boolean) => invoke<boolean>("set_auto_follow", { enabled }),
+  /** 本应用自己的进程名（小写，带扩展名）—— 黑名单里那条锁定项就是它。 */
+  selfProcessName: () => invoke<string>("self_process_name"),
   setBallVisible: (visible: boolean) => invoke<void>("set_ball_visible", { visible }),
   setBallGeometry: (geometry: BallGeometry) => invoke<void>("set_ball_geometry", { ...geometry }),
   setBallDragging: (dragging: boolean) => invoke<void>("set_ball_dragging", { dragging }),
