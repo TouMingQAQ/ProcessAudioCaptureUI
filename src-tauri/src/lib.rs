@@ -496,8 +496,11 @@ fn set_ball_dragging(state: State<'_, AppState>, dragging: bool) {
     state.ball.set_dragging(dragging);
 }
 
-#[tauri::command]
-fn show_main_window(app: AppHandle) -> Result<(), String> {
+/// 把主窗口叫到前台。
+///
+/// 它可能被最小化了，也可能被收进了托盘（点 × 只是隐藏），所以先还原、再显示、最后抢焦点。
+/// 两处共用这一段：悬浮球上的「打开主界面」，以及第二个实例启动时（见 [`run`]）。
+fn reveal_main_window(app: &AppHandle) -> Result<(), String> {
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "主窗口不存在".to_string())?;
@@ -506,8 +509,13 @@ fn show_main_window(app: AppHandle) -> Result<(), String> {
     window.show().map_err(|e| e.to_string())?;
     let _ = window.set_focus();
     // 主界面一露脸，托盘菜单上的"隐藏主界面"就得跟上
-    tray::sync(&app);
+    tray::sync(app);
     Ok(())
+}
+
+#[tauri::command]
+fn show_main_window(app: AppHandle) -> Result<(), String> {
+    reveal_main_window(&app)
 }
 
 /// 把悬浮球窗口铺满主显示器，并切成"收起"状态。
@@ -555,6 +563,13 @@ fn recording_path(app: &AppHandle, process_name: &str, pid: u32) -> std::path::P
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // 单实例得是注册的第一个插件：第二个进程应当在开线程、建窗口之前就退出去。
+        // 退出前顺手把已经在跑的主界面叫到前台 —— 用户双击图标就该看见界面
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Err(err) = reveal_main_window(app) {
+                eprintln!("[ProcessAudioCapture] 第二个实例唤起主窗口失败：{err}");
+            }
+        }))
         .manage(AppState::default())
         // 点 × 只是把主界面收进托盘：采集与悬浮球继续在后台跑，
         // 想彻底退出用托盘菜单里的"退出"。

@@ -1,6 +1,6 @@
 [package]
 name = "process-audio-capture-ui"
-version = "0.1.0"
+version = "0.0.3"
 description = "进程音频监听：挑一个正在出声的程序，实时看它的波形与频谱"
 authors = ["ProcessAudioCaptrueUI"]
 edition = "2021"
@@ -20,6 +20,8 @@ tauri = { version = "2", features = ["tray-icon"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 libloading = "0.8"
+# 单实例：第二个进程启动时会立刻退出，并把第一个实例的主窗口叫到前台
+tauri-plugin-single-instance = "2"
 
 [profile.release]
 codegen-units = 1
