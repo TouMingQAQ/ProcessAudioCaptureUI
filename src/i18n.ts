@@ -257,6 +257,8 @@ const ZH: Dict = {
   "ballStyle.hint.particles": "一圈细小光点被音乐推开，安静时轻轻呼吸。",
   "ballStyle.ripple": "涟漪",
   "ballStyle.hint.ripple": "声压一圈圈荡开，响度越大涟漪越密越亮。",
+  "ballStyle.vu": "VU 表",
+  "ballStyle.hint.vu": "老式球形VU表，指针跟着响度摆动。",
   "ballStyle.none": "无",
   "ballStyle.hint.none": "这一圈什么都不画 —— 只想要另一圈时用它。",
 
@@ -537,6 +539,8 @@ const EN: Dict = {
   "ballStyle.hint.particles": "A ring of specks pushed outward by the music, breathing when idle.",
   "ballStyle.ripple": "Ripple",
   "ballStyle.hint.ripple": "Pressure ripples outward; louder means denser and brighter.",
+  "ballStyle.vu": "VU meter",
+  "ballStyle.hint.vu": "An old-school needle meter: a shallow arc scale, long needle swinging with volume.",
   "ballStyle.none": "None",
   "ballStyle.hint.none": "Draws nothing on this layer — pick it when you only want the other one.",
 
