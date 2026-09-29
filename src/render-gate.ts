@@ -38,8 +38,8 @@ function visibilityEventFor(label: string): string {
 export function bindRenderGate(onChange: (visible: boolean) => void): () => void {
   const currentWindow = getCurrentWindow();
   const label = currentWindow.label;
-  /** 后端说的：它有没有把我们藏起来。 */
-  let shown = true;
+  /** 原生窗口说的：窗口当前是否实际可见。 */
+  let nativeVisible = true;
   /** 浏览器说的：文档是不是可见的。 */
   let documentVisible = true;
   /** 原生窗口说的：窗口是不是最小化了。 */
@@ -48,13 +48,13 @@ export function bindRenderGate(onChange: (visible: boolean) => void): () => void
   let closed = false;
   let pollInFlight = false;
   const minimizePoll = window.setInterval(() => {
-    if (closed || !shown || !documentVisible || pollInFlight) return;
+    if (closed || !documentVisible || pollInFlight) return;
     pollInFlight = true;
-    void currentWindow
-      .isMinimized()
-      .then((value) => {
+    void Promise.all([currentWindow.isVisible(), currentWindow.isMinimized()])
+      .then(([visible, minimizedNow]) => {
         if (closed) return;
-        minimized = value;
+        nativeVisible = visible;
+        minimized = minimizedNow;
         apply();
       })
       .catch(() => {})
@@ -65,7 +65,7 @@ export function bindRenderGate(onChange: (visible: boolean) => void): () => void
   const pending: Promise<UnlistenFn>[] = [];
 
   const apply = () => {
-    const visible = shown && documentVisible && !minimized;
+    const visible = nativeVisible && documentVisible && !minimized;
     if (visible === lastApplied) return;
     lastApplied = visible;
     document.documentElement.dataset.rendering = visible ? "visible" : "hidden";
@@ -84,7 +84,7 @@ export function bindRenderGate(onChange: (visible: boolean) => void): () => void
 
   /** 后端 / 焦点这两条"露出来了"的消息：以它们为准，别被过时的文档状态挡住。 */
   const reveal = () => {
-    shown = true;
+    nativeVisible = true;
     documentVisible = true;
     minimized = false;
     apply();
@@ -97,7 +97,7 @@ export function bindRenderGate(onChange: (visible: boolean) => void): () => void
       (event) => {
         if (event.payload.visible) reveal();
         else {
-          shown = false;
+          nativeVisible = false;
           apply();
         }
       },
