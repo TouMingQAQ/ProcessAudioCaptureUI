@@ -389,6 +389,7 @@ html[data-ball-style="ripple"] .orb {
 
 .pill-primary.is-stop {
   background: linear-gradient(135deg, var(--ui-danger), var(--ui-accent));
+  color: var(--ui-danger-ink);
 }
 
 .toggle-dot {

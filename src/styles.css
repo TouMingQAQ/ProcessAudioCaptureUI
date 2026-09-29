@@ -274,7 +274,7 @@ body {
 .btn-danger {
   border-color: transparent;
   background: linear-gradient(135deg, var(--ui-danger), var(--ui-accent));
-  color: var(--ui-accent-ink);
+  color: var(--ui-danger-ink);
 }
 
 .btn-ghost[aria-pressed="true"] {

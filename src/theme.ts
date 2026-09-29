@@ -71,8 +71,10 @@ export interface Palette {
   /** 强调色与渐变副色。 */
   accent: string;
   accent2: string;
-  /** 强调色上的文字色。 */
+  /** 压强调色渐变的文字色：白，强调色太浅时自动换成中性深色。 */
   accentInk: string;
+  /** 压「危险色 → 强调色」渐变的文字色（停止采集这类按钮）。 */
+  dangerInk: string;
   line: string;
   lineStrong: string;
   ok: string;
@@ -164,6 +166,39 @@ export function alpha(color: string, a: number): string {
   return `rgba(${r}, ${g}, ${b}, ${a})`;
 }
 
+/** WCAG 相对亮度（0 = 黑，1 = 白）。 */
+function luminance(color: string): number {
+  const [r, g, b] = parseHex(color);
+  const linear = (value: number) => {
+    const c = value / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+}
+
+/** 两色的对比度（1 = 完全一样，21 = 黑配白）。 */
+function contrast(a: string, b: string): number {
+  const la = luminance(a);
+  const lb = luminance(b);
+  const hi = Math.max(la, lb);
+  const lo = Math.min(la, lb);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/** 压强调色用的中性深色 —— 浅色强调色上白字糊掉时换它。 */
+const ACCENT_INK_DARK = "#1b1e24";
+
+/**
+ * 挑一个压得住渐变的文字色。
+ *
+ * 按钮 / 分段控件 / 徽标都是"渐变底 + 白字"，白字并不是万能：强调色浅的主题
+ * （樱花 / 马卡龙 / 薄荷 / 北境）白字会糊进底色里。这里取渐变中点按 WCAG 对比度
+ * 算一遍，白字达不到 3（UI 控件的最低要求）就换成中性深色。
+ */
+function inkOn(a: string, b: string): string {
+  return contrast(mix(a, b, 0.5), "#ffffff") >= 3 ? "#ffffff" : ACCENT_INK_DARK;
+}
+
 /* ---------------------------------------------------------------- 种子 */
 
 /**
@@ -220,7 +255,7 @@ function buildPalette(seed: AppSeed, appearance: Appearance): Palette {
     textFaint: mix(ink, card, 0.62),
     accent: seed.accent,
     accent2: seed.accent2,
-    accentInk: "#ffffff",
+    accentInk: inkOn(seed.accent, seed.accent2),
     line: alpha(seed.accent, dark ? 0.34 : 0.26),
     lineStrong: alpha(seed.accent, dark ? 0.66 : 0.55),
     ok: semantic.ok,
@@ -229,6 +264,7 @@ function buildPalette(seed: AppSeed, appearance: Appearance): Palette {
     warnSoft: alpha(semantic.warn, dark ? 0.22 : 0.18),
     danger: semantic.danger,
     dangerSoft: alpha(semantic.danger, dark ? 0.22 : 0.18),
+    dangerInk: inkOn(semantic.danger, seed.accent),
     shadow: dark ? "rgba(0, 0, 0, 0.55)" : alpha(seed.accent, 0.16),
     vizGrid: alpha(seed.accent, dark ? 0.26 : 0.2),
     vizWaveA: viz[0],
@@ -632,7 +668,13 @@ export const DEFAULT_BALL_THEME = "solid";
 
 /* ------------------------------------------------------------ 变量应用 */
 
-const kebab = (key: string) => key.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
+/**
+ * 字段名 → 变量名的一段：`accentInk` → `accent-ink`、`accent2` → `accent-2`。
+ *
+ * 数字也要断开：`accent2` 若原样拼进去就是 `--ui-accent2`，而样式里写的是
+ * `--ui-accent-2`，会静默取不到值、整条 `background` 声明一起失效。
+ */
+const kebab = (key: string) => key.replace(/[A-Z]|\d+/g, (m) => `-${m.toLowerCase()}`);
 
 /**
  * 把色板摊成 CSS 变量表。
