@@ -302,6 +302,7 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
   const pulseGroup = $<HTMLDivElement>("ball-pulse-group");
   const pulseNote = $<HTMLParagraphElement>("ball-pulse-note");
   const lockedBox = $<HTMLInputElement>("ball-locked");
+  const windowLevelGroup = $<HTMLDivElement>("ball-window-level");
 
   const knStatus = $<HTMLDivElement>("kn-status");
   const knStatusDot = $<HTMLSpanElement>("kn-status-dot");
@@ -595,6 +596,22 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
     pulseNote.textContent = t(`ballPulse.hint.${settings.ballPulseAlgorithm}`);
 
     lockedBox.checked = settings.ballLocked;
+
+    const levels = ["normal", "wallpaper", "topmost"] as const;
+    const levelFrag = document.createDocumentFragment();
+    for (const level of levels) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "seg";
+      btn.dataset.level = level;
+      btn.textContent = t(`settings.ball.windowLevel.${level}`);
+      const active = settings.ballWindowLevel === level;
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-pressed", String(active));
+      btn.addEventListener("click", () => void prefs.patch({ ballWindowLevel: level }));
+      levelFrag.append(btn);
+    }
+    windowLevelGroup.replaceChildren(levelFrag);
   }
 
   /* ------------------------------------------------------------- 窗口名单 */
@@ -900,6 +917,7 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
       ballPulse: false,
       ballPulseAlgorithm: DEFAULT_BALL_PULSE_ALGORITHM,
       ballPulseAmount: DEFAULT_BALL_PULSE_AMOUNT,
+      ballWindowLevel: "topmost",
     });
   });
 

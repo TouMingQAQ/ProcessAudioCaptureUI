@@ -81,6 +81,8 @@ pub struct Settings {
     /// 锁定悬浮球：锁定后它不吃鼠标 —— 悬停不展开面板、不能拖动、点不动，
     /// 整块区域直接穿透给桌面。解锁只能回主界面的设置页（见 `ball::run`）。
     pub ball_locked: bool,
+    /// 悬浮球窗口层级：normal / wallpaper / topmost。
+    pub ball_window_level: String,
 
     /* ------------------------------------------------- 遗留字段（仅用于迁移） */
     /// 旧版「悬浮球配色」id。配色改成自定义色槽后不再读取，
@@ -119,6 +121,7 @@ impl Default for Settings {
             ball_pos_x: 0.92,
             ball_pos_y: 0.88,
             ball_locked: false,
+            ball_window_level: "topmost".to_string(),
 
             ball_theme: "solid".to_string(),
             ball_style: "ring".to_string(),
@@ -148,7 +151,8 @@ pub fn store<R: Runtime>(app: &AppHandle<R>, settings: &Settings) -> Result<(), 
     if let Some(dir) = file.parent() {
         fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败：{e}"))?;
     }
-    let text = serde_json::to_string_pretty(settings).map_err(|e| format!("序列化设置失败：{e}"))?;
+    let text =
+        serde_json::to_string_pretty(settings).map_err(|e| format!("序列化设置失败：{e}"))?;
     fs::write(&file, text).map_err(|e| format!("写入 {} 失败：{e}", file.display()))
 }
 

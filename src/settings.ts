@@ -73,6 +73,7 @@ export const DEFAULT_SETTINGS: Settings = {
   ballPosX: 0.92,
   ballPosY: 0.88,
   ballLocked: false,
+  ballWindowLevel: "topmost",
 
   // 遗留字段：只在迁移时读一次
   ballTheme: "solid",
@@ -149,6 +150,9 @@ function normalizeBall(merged: Settings): void {
   merged.ballPosX = clampNumber(merged.ballPosX, 0, 1, 0.92);
   merged.ballPosY = clampNumber(merged.ballPosY, 0, 1, 0.88);
   merged.ballLocked = Boolean(merged.ballLocked);
+  if (merged.ballWindowLevel !== "normal" && merged.ballWindowLevel !== "wallpaper" && merged.ballWindowLevel !== "topmost") {
+    merged.ballWindowLevel = "topmost";
+  }
 }
 
 /** 字段可能是手改坏的、也可能来自旧版本，一律收敛到已知取值。 */

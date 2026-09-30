@@ -171,6 +171,8 @@ export interface Settings {
    * 球照常显示、照常跟着音频动。
    */
   ballLocked: boolean;
+  /** 悬浮球窗口层级。 */
+  ballWindowLevel: "normal" | "wallpaper" | "topmost";
 
   /** 旧版「悬浮球配色」id：只在 `ballColors` 为空时拿来当初始色。 */
   ballTheme: string;
@@ -255,6 +257,8 @@ export const api = {
   setBallVisible: (visible: boolean) => invoke<void>("set_ball_visible", { visible }),
   setBallGeometry: (geometry: BallGeometry) => invoke<void>("set_ball_geometry", { ...geometry }),
   setBallDragging: (dragging: boolean) => invoke<void>("set_ball_dragging", { dragging }),
+  setBallWindowLevel: (level: Settings["ballWindowLevel"]) =>
+    invoke<void>("set_ball_window_level", { level }),
   showMainWindow: () => invoke<void>("show_main_window"),
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) => invoke<Settings>("save_settings", { settings }),

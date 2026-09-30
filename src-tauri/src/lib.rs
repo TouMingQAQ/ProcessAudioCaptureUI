@@ -32,6 +32,16 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, WebviewWindow};
 
+#[cfg(windows)]
+use windows::core::w;
+#[cfg(windows)]
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+#[cfg(windows)]
+use windows::Win32::UI::WindowsAndMessaging::{
+    FindWindowExW, FindWindowW, SendMessageTimeoutW, SetParent, SetWindowPos, HWND_BOTTOM,
+    HWND_TOP, SMTO_NORMAL, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+};
+
 use capture::{ActiveCapture, StartReport, StopReport};
 use pac::PacLibrary;
 use prefs::Settings;
@@ -87,7 +97,9 @@ pub struct AppState {
 
 /// 中毒的锁也要能拿到，否则一次 panic 会让整个应用卡死。
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// 当前采集会话的只读快照。
@@ -302,7 +314,12 @@ fn build_dll_status(app: &AppHandle, state: &AppState) -> DllStatus {
     let loaded = lock(&state.library).clone();
 
     let (is_loaded, path, version, error) = match loaded {
-        Some(lib) => (true, Some(lib.path.display().to_string()), lib.version(), None),
+        Some(lib) => (
+            true,
+            Some(lib.path.display().to_string()),
+            lib.version(),
+            None,
+        ),
         None => (false, None, 0, lock(&state.load_error).clone()),
     };
 
@@ -324,7 +341,7 @@ fn build_dll_status(app: &AppHandle, state: &AppState) -> DllStatus {
 
 /* ------------------------------------------------------------------ 会话控制 */
 /* 下面两个函数都是阻塞的（pac_start_capture 最长阻塞 10 秒），
-   调用方必须自己放到阻塞线程池里。 */
+调用方必须自己放到阻塞线程池里。 */
 
 pub(crate) fn stop_active(app: &AppHandle, state: &AppState, notify: bool) -> Option<StopReport> {
     let active = { lock(&state.active).take() };
@@ -436,14 +453,17 @@ async fn start_capture_best(app: AppHandle) -> Result<StartReport, String> {
         // 名单外的窗口不参与"自动挑一个"，不然刚屏蔽掉的进程会被悬浮球又捡回来
         let (allow, block) = state.window_lists();
         let selectable = filter::allowed_windows(&result.windows, &allow, &block);
-        Ok(monitor::pick_candidate(&selectable, None, std::process::id()))
+        Ok(monitor::pick_candidate(
+            &selectable,
+            None,
+            std::process::id(),
+        ))
     })
     .await
     .map_err(|e| format!("枚举窗口异常：{e}"))??;
 
-    let target = target.ok_or_else(|| {
-        "现在没有任何窗口在出声，先让音乐 / 视频播起来再试".to_string()
-    })?;
+    let target =
+        target.ok_or_else(|| "现在没有任何窗口在出声，先让音乐 / 视频播起来再试".to_string())?;
 
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
@@ -614,12 +634,15 @@ fn save_settings(
     prefs::store(&app, &settings)?;
 
     // 这几个开关的真身在 AppState 上（采集线程 / 自动跟随 / 扫描线程都要读），顺手同步过去
-    state.auto_follow.store(settings.auto_follow, Ordering::Relaxed);
+    state
+        .auto_follow
+        .store(settings.auto_follow, Ordering::Relaxed);
     state.set_window_lists(&settings.window_allowlist, &settings.window_blocklist);
     // 帧率：正在跑的会话也一起换成新的推帧节奏
     state.set_frame_rate(settings.frame_rate);
     // 锁定状态由悬停检测线程读，改完下一轮（≤25ms）就生效
     state.ball.set_locked(settings.ball_locked);
+    apply_ball_window_level(&app, &settings.ball_window_level)?;
 
     prefs::broadcast(&app, &settings);
     Ok(settings)
@@ -639,6 +662,102 @@ fn self_process_name() -> String {
 fn ball_window(app: &AppHandle) -> Result<WebviewWindow, String> {
     app.get_webview_window("ball")
         .ok_or_else(|| "悬浮球窗口不存在".to_string())
+}
+
+/// 将悬浮球放到用户选择的窗口层级。桌面壁纸层使用 Windows 的 WorkerW，
+/// 这样它会跟着桌面显示但不会盖住普通应用窗口。
+fn apply_ball_window_level(app: &AppHandle, level: &str) -> Result<(), String> {
+    let window = ball_window(app)?;
+    let level = match level {
+        "normal" | "wallpaper" | "topmost" => level,
+        _ => "topmost",
+    };
+
+    #[cfg(windows)]
+    {
+        let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+        unsafe {
+            if level == "wallpaper" {
+                let worker =
+                    desktop_worker_window().ok_or_else(|| "找不到桌面壁纸窗口".to_string())?;
+                SetParent(hwnd, Some(worker)).map_err(|e| e.to_string())?;
+                window.set_always_on_top(false).map_err(|e| e.to_string())?;
+                SetWindowPos(
+                    hwnd,
+                    Some(HWND_BOTTOM),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                )
+                .map_err(|e| e.to_string())?;
+            } else {
+                // 解除 WorkerW 父窗口后恢复为普通顶层窗口。
+                SetParent(hwnd, None).map_err(|e| e.to_string())?;
+                window
+                    .set_always_on_top(level == "topmost")
+                    .map_err(|e| e.to_string())?;
+                let insert_after = if level == "topmost" {
+                    HWND_TOP
+                } else {
+                    HWND_BOTTOM
+                };
+                SetWindowPos(
+                    hwnd,
+                    Some(insert_after),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+        return Ok(());
+    }
+
+    #[cfg(not(windows))]
+    {
+        if level == "wallpaper" {
+            return Err("桌面壁纸层仅支持 Windows".to_string());
+        }
+        window
+            .set_always_on_top(level == "topmost")
+            .map_err(|e| e.to_string())
+    }
+}
+
+#[tauri::command]
+fn set_ball_window_level(app: AppHandle, level: String) -> Result<(), String> {
+    apply_ball_window_level(&app, &level)
+}
+
+#[cfg(windows)]
+unsafe fn desktop_worker_window() -> Option<HWND> {
+    let progman = FindWindowW(Some(w!("Progman")), None).ok()?;
+    // 通知资源管理器创建 WorkerW 层。
+    let _ = SendMessageTimeoutW(
+        progman,
+        0x052C,
+        WPARAM(0),
+        LPARAM(0),
+        SMTO_NORMAL,
+        1000,
+        None,
+    );
+
+    let mut worker = FindWindowExW(None, None, Some(w!("WorkerW")), None).ok()?;
+    while worker.0 != 0 {
+        let shell_view = FindWindowExW(Some(worker), None, Some(w!("SHELLDLL_DefView")), None).ok();
+        if shell_view.is_some_and(|hwnd| hwnd.0 != 0) {
+            let next = FindWindowExW(None, Some(worker), Some(w!("WorkerW")), None).ok()?;
+            return (next.0 != 0).then_some(next);
+        }
+        worker = FindWindowExW(None, Some(worker), Some(w!("WorkerW")), None).ok()?;
+    }
+    None
 }
 
 #[tauri::command]
@@ -785,10 +904,15 @@ pub fn run() {
             {
                 let settings = prefs::load(&handle);
                 let state = app.state::<AppState>();
-                state.auto_follow.store(settings.auto_follow, Ordering::Relaxed);
+                state
+                    .auto_follow
+                    .store(settings.auto_follow, Ordering::Relaxed);
                 state.set_window_lists(&settings.window_allowlist, &settings.window_blocklist);
                 state.ball.set_locked(settings.ball_locked);
                 state.set_frame_rate(settings.frame_rate);
+                if let Err(err) = apply_ball_window_level(&handle, &settings.ball_window_level) {
+                    eprintln!("[ProcessAudioCapture] 设置悬浮球窗口层级失败：{err}");
+                }
 
                 // 监听缓存：上次听的是谁，这次接着听（不在线就一直等，见 [`monitor`]）
                 let cached = settings.monitor_target.trim().to_lowercase();
@@ -830,6 +954,7 @@ pub fn run() {
             set_ball_visible,
             set_ball_geometry,
             set_ball_dragging,
+            set_ball_window_level,
             show_main_window,
             get_settings,
             save_settings
