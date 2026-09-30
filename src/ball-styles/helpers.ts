@@ -14,6 +14,26 @@ export function energy(d: LayerCtx, index: number, count: number): number {
   return clamp01(d.live ? (d.bands[at] ?? 0) : idleBand(index, d.time));
 }
 
+/** VU 刻度的下限（dB）：响度低于它就算到底了。 */
+export const VU_MIN_DB = 36;
+
+/**
+ * 响度 → VU 刻度位置（0..1）。
+ *
+ * 指针不吃线性音量：先把响度折成 dB（`-VU_MIN_DB` 在最左、0 dB 在最右），再掺两成线性量
+ * —— 小音量也看得出在动，大声时才压到右边那一小段。跟真表的手感一致，纯线性映射会让指针
+ * 老停在中间。
+ *
+ * 内外两圈的刻度都走这一份换算（表针和弧位置逐点对齐、红区落在同一个响度上），所以调
+ * `VU_MIN_DB` 时两圈一起变。
+ */
+export function vuDeflection(level: number): number {
+  const x = clamp01(level);
+  if (x <= 1e-4) return 0;
+  const byDb = clamp01((20 * Math.log10(x) + VU_MIN_DB) / VU_MIN_DB);
+  return clamp01(byDb * 0.8 + x * 0.2);
+}
+
 /**
  * 「带惯性」的缓动：不直接跳到目标，而是按上针 / 回针两个速度朝它挪一部分 —— 真表针、
  * 电平弧就是这么荡过去的，音量突变时看着有惯性，不像电表那样一格一格地弹。

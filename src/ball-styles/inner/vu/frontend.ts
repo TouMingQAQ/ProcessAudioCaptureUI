@@ -1,5 +1,5 @@
 import { alpha, slotColor, slotRamp } from "../../../theme";
-import { TAU, clamp01, createEasing, lighten } from "../../helpers";
+import { TAU, clamp01, createEasing, lighten, vuDeflection } from "../../helpers";
 import type { LayerCtx } from "../../types";
 
 /**
@@ -7,14 +7,6 @@ import type { LayerCtx } from "../../types";
  * 静态预览只画一帧，卡片上依旧是"给什么画什么"。
  */
 const easeNeedle = createEasing();
-
-function vuDeflection(level: number): number {
-  const minDb = 36;
-  const x = clamp01(level);
-  if (x <= 1e-4) return 0;
-  const byDb = clamp01((20 * Math.log10(x) + minDb) / minDb);
-  return clamp01(byDb * 0.8 + x * 0.2);
-}
 
 export function draw(ctx: CanvasRenderingContext2D, d: LayerCtx) {
   const { center, unit, colors, level, live, time } = d;

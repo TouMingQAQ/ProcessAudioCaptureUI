@@ -1,5 +1,5 @@
 import { alpha, slotColor, slotRamp } from "../../../theme";
-import { clamp01, createEasing } from "../../helpers";
+import { createEasing, vuDeflection } from "../../helpers";
 import type { LayerCtx } from "../../types";
 
 /**
@@ -12,7 +12,7 @@ export function draw(ctx: CanvasRenderingContext2D, d: LayerCtx): void {
   ctx.translate(d.center, d.center);
   ctx.scale(d.unit, d.unit);
 
-  // Match the inner VU meter: an upward facing, shallow arc with a warm high zone.
+  // Match the inner VU meter: same dB scale, upward facing, shallow arc with a warm high zone.
   const start = -Math.PI / 2 - (65 * Math.PI) / 180;
   const end = -Math.PI / 2 + (65 * Math.PI) / 180;
   const innerR = 34;
@@ -25,8 +25,9 @@ export function draw(ctx: CanvasRenderingContext2D, d: LayerCtx): void {
   const LEVEL_ATTACK = 10;
   /** 亮弧**落回来**的快慢（每秒趋近比例）。调小 → 回落更慢，余韵更长。 */
   const LEVEL_RELEASE = 10;
-  // 这一帧想让亮区停在哪儿（待机时在起点附近轻轻游走，别看着像断电了）
-  const target = d.live ? clamp01(d.level) : 0.04 + 0.025 * (0.5 + 0.5 * Math.sin(d.time / 1400));
+  // 这一帧想让亮区停在哪儿：跟内圈表针走同一份 dB 刻度（`vuDeflection`），两圈才逐点对齐；
+  // 待机时在起点附近轻轻游走，别看着像断电了
+  const target = d.live ? vuDeflection(d.level) : 0.04 + 0.025 * (0.5 + 0.5 * Math.sin(d.time / 1400));
   // 跟针一样带惯性：按真实帧间隔朝目标缓动（静态预览 time = 0，直接到位）
   const value = easeLevel(ctx.canvas, target, d.time, LEVEL_ATTACK, LEVEL_RELEASE);
 
@@ -35,7 +36,8 @@ export function draw(ctx: CanvasRenderingContext2D, d: LayerCtx): void {
   ctx.lineWidth = 1.1;
   ctx.beginPath(); ctx.arc(0, 0, innerR, start, end); ctx.stroke();
 
-  const hotAt = 0.76;
+  // 红区起点跟内圈表针用同一个刻度位置：两圈的红线落在同一个响度上
+  const hotAt = 0.75;
   ctx.strokeStyle = alpha(slotColor(d.colors, 2), 0.35);
   ctx.lineWidth = 2.1;
   ctx.beginPath(); ctx.arc(0, 0, outerR, start + (end - start) * hotAt, end); ctx.stroke();
