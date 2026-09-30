@@ -33,7 +33,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, WebviewWindow};
 
 #[cfg(windows)]
-use windows::core::w;
+use windows::core::{w, PCWSTR};
 #[cfg(windows)]
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 #[cfg(windows)]
@@ -736,7 +736,7 @@ fn set_ball_window_level(app: AppHandle, level: String) -> Result<(), String> {
 
 #[cfg(windows)]
 unsafe fn desktop_worker_window() -> Option<HWND> {
-    let progman = FindWindowW(Some(w!("Progman")), None).ok()?;
+    let progman = FindWindowW(w!("Progman"), PCWSTR::null()).ok()?;
     // 通知资源管理器创建 WorkerW 层。
     let _ = SendMessageTimeoutW(
         progman,
@@ -748,14 +748,15 @@ unsafe fn desktop_worker_window() -> Option<HWND> {
         None,
     );
 
-    let mut worker = FindWindowExW(None, None, Some(w!("WorkerW")), None).ok()?;
-    while worker.0 != 0 {
-        let shell_view = FindWindowExW(Some(worker), None, Some(w!("SHELLDLL_DefView")), None).ok();
-        if shell_view.is_some_and(|hwnd| hwnd.0 != 0) {
-            let next = FindWindowExW(None, Some(worker), Some(w!("WorkerW")), None).ok()?;
-            return (next.0 != 0).then_some(next);
+    let mut worker = FindWindowExW(None, None, w!("WorkerW"), PCWSTR::null()).ok()?;
+    while !worker.0.is_null() {
+        let shell_view =
+            FindWindowExW(Some(worker), None, w!("SHELLDLL_DefView"), PCWSTR::null()).ok();
+        if shell_view.is_some_and(|hwnd| !hwnd.0.is_null()) {
+            let next = FindWindowExW(None, Some(worker), w!("WorkerW"), PCWSTR::null()).ok()?;
+            return (!next.0.is_null()).then_some(next);
         }
-        worker = FindWindowExW(None, Some(worker), Some(w!("WorkerW")), None).ok()?;
+        worker = FindWindowExW(None, Some(worker), w!("WorkerW"), PCWSTR::null()).ok()?;
     }
     None
 }
