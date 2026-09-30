@@ -597,7 +597,7 @@ export function createSettingsPanel(options: SettingsPanelOptions): SettingsPane
 
     lockedBox.checked = settings.ballLocked;
 
-    const levels = ["wallpaper", "topmost"] as const;
+    const levels = ["normal", "wallpaper", "topmost"] as const;
     const levelFrag = document.createDocumentFragment();
     for (const level of levels) {
       const btn = document.createElement("button");

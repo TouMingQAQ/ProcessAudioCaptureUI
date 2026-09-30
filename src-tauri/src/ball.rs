@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
+use tauri_plugin_wallpaper::WallpaperExt;
 
 use crate::AppState;
 
@@ -53,6 +54,8 @@ pub struct BallInteraction {
     hit: Mutex<BallHit>,
     dragging: AtomicBool,
     locked: AtomicBool,
+    wallpaper: AtomicBool,
+    hovered: AtomicBool,
 }
 
 impl BallInteraction {
@@ -76,6 +79,22 @@ impl BallInteraction {
     /// 锁定 / 解锁。锁定后悬停检测整个跳过，窗口常驻穿透（见 [`run`]）。
     pub fn set_locked(&self, locked: bool) {
         self.locked.store(locked, Ordering::Relaxed);
+    }
+
+    pub fn set_wallpaper(&self, wallpaper: bool) {
+        self.wallpaper.store(wallpaper, Ordering::Relaxed);
+    }
+
+    pub fn is_wallpaper(&self) -> bool {
+        self.wallpaper.load(Ordering::Relaxed)
+    }
+
+    pub fn set_hovered(&self, hovered: bool) {
+        self.hovered.store(hovered, Ordering::Relaxed);
+    }
+
+    pub fn is_hovered(&self) -> bool {
+        self.hovered.load(Ordering::Relaxed)
     }
 
     fn hit(&self) -> BallHit {
@@ -162,6 +181,16 @@ fn run(app: AppHandle) {
 /// 切换悬停状态：先改窗口的可交互性，再通知前端切样式。
 fn set_state(app: &AppHandle, window: &WebviewWindow, expanded: &mut bool, hovered: bool) {
     *expanded = hovered;
+    if let Some(state) = app.try_state::<AppState>() {
+        state.ball.set_hovered(hovered);
+        if state.ball.is_wallpaper() {
+            // 壁纸窗口只在球或面板展开时接收合成鼠标事件。持续注册全局输入会让
+            // 壁纸 WebView 在主窗口操作期间也参与命中，表现为应用内按钮偶发失效。
+            let _ = app
+                .wallpaper()
+                .set_mouse_interactive_window(window, hovered);
+        }
+    }
     // 收起时整窗穿透，不挡桌面；展开时得能点面板按钮、也能拖动小球
     let _ = window.set_ignore_cursor_events(!hovered);
     let _ = app.emit_to("ball", BALL_HOVER_EVENT, HoverPayload { hovered });

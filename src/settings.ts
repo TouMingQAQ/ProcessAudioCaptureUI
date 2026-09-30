@@ -150,7 +150,11 @@ function normalizeBall(merged: Settings): void {
   merged.ballPosX = clampNumber(merged.ballPosX, 0, 1, 0.92);
   merged.ballPosY = clampNumber(merged.ballPosY, 0, 1, 0.88);
   merged.ballLocked = Boolean(merged.ballLocked);
-  if (merged.ballWindowLevel !== "wallpaper" && merged.ballWindowLevel !== "topmost") {
+  if (
+    merged.ballWindowLevel !== "normal" &&
+    merged.ballWindowLevel !== "wallpaper" &&
+    merged.ballWindowLevel !== "topmost"
+  ) {
     merged.ballWindowLevel = "topmost";
   }
 }

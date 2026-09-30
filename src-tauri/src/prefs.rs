@@ -81,7 +81,7 @@ pub struct Settings {
     /// 锁定悬浮球：锁定后它不吃鼠标 —— 悬停不展开面板、不能拖动、点不动，
     /// 整块区域直接穿透给桌面。解锁只能回主界面的设置页（见 `ball::run`）。
     pub ball_locked: bool,
-    /// 悬浮球窗口层级：wallpaper / topmost。
+    /// 悬浮球窗口层级：normal / wallpaper / topmost。
     pub ball_window_level: String,
 
     /* ------------------------------------------------- 遗留字段（仅用于迁移） */

@@ -172,7 +172,7 @@ export interface Settings {
    */
   ballLocked: boolean;
   /** 悬浮球窗口层级。 */
-  ballWindowLevel: "wallpaper" | "topmost";
+  ballWindowLevel: "normal" | "wallpaper" | "topmost";
 
   /** 旧版「悬浮球配色」id：只在 `ballColors` 为空时拿来当初始色。 */
   ballTheme: string;

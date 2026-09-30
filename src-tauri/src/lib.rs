@@ -31,15 +31,10 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, WebviewWindow};
-
-#[cfg(windows)]
-use windows::core::{w, PCWSTR};
-#[cfg(windows)]
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use tauri_plugin_wallpaper::{AttachRequest, DetachRequest, WallpaperExt};
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowExW, FindWindowW, SendMessageTimeoutW, SetWindowLongPtrW, SetWindowPos,
-    GWLP_HWNDPARENT, HWND_BOTTOM, HWND_TOP, SMTO_NORMAL, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SetWindowPos, HWND_BOTTOM, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
 };
 
 use capture::{ActiveCapture, StartReport, StopReport};
@@ -623,6 +618,7 @@ fn save_settings(
     state: State<'_, AppState>,
     settings: Settings,
 ) -> Result<Settings, String> {
+    let previous_level = prefs::load(&app).ball_window_level;
     // 名单在这里统一收拾（去空白、转小写、去重、补上锁定的自己），广播出去的就是最终形态，
     // 四个窗口不必各算各的
     let mut settings = settings;
@@ -642,7 +638,10 @@ fn save_settings(
     state.set_frame_rate(settings.frame_rate);
     // 锁定状态由悬停检测线程读，改完下一轮（≤25ms）就生效
     state.ball.set_locked(settings.ball_locked);
-    apply_ball_window_level(&app, &settings.ball_window_level)?;
+    // 保存其它设置时不要重新挂载壁纸窗口；重挂 WebView 会打断当前按钮的输入状态。
+    if settings.ball_window_level != previous_level {
+        apply_ball_window_level(&app, &settings.ball_window_level)?;
+    }
 
     prefs::broadcast(&app, &settings);
     Ok(settings)
@@ -664,42 +663,60 @@ fn ball_window(app: &AppHandle) -> Result<WebviewWindow, String> {
         .ok_or_else(|| "悬浮球窗口不存在".to_string())
 }
 
-/// 将悬浮球放到用户选择的窗口层级。壁纸模式把桌面 WorkerW 设为拥有窗口，
-/// 悬浮球仍是顶层窗体，因此保留 WebView 的输入能力。
+/// 将悬浮球放到用户选择的窗口层级。普通窗口沿用原来的底层窗口行为，
+/// 壁纸模式交给 `tauri-plugin-wallpaper` 处理 WorkerW 和输入转发。
 fn apply_ball_window_level(app: &AppHandle, level: &str) -> Result<(), String> {
     let window = ball_window(app)?;
     let level = match level {
-        "wallpaper" | "topmost" => level,
+        "normal" | "wallpaper" | "topmost" => level,
         _ => "topmost",
     };
 
-    #[cfg(windows)]
-    {
-        let hwnd = window.hwnd().map_err(|e| e.to_string())?;
-        unsafe {
-            if level == "wallpaper" {
-                let worker =
-                    desktop_worker_window().ok_or_else(|| "找不到桌面壁纸窗口".to_string())?;
-                window.set_always_on_top(false).map_err(|e| e.to_string())?;
-                SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, worker.0 as isize);
-                SetWindowPos(
-                    hwnd,
-                    Some(HWND_BOTTOM),
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-                )
+    if level == "wallpaper" {
+        window.set_always_on_top(false).map_err(|e| e.to_string())?;
+        // 悬停线程会在球或面板展开时按需开启鼠标转发；这里不再永久注册全局输入。
+        let mut request = AttachRequest::new(window.label()).with_input_forwarding(false, false);
+        if let Ok(Some(monitor)) = window.primary_monitor() {
+            if let Some(name) = monitor.name() {
+                request = request.with_monitor(&name);
+            }
+        }
+        app.wallpaper().attach(request).map_err(|e| e.to_string())?;
+        let state = app.state::<AppState>();
+        state.ball.set_wallpaper(true);
+        if state.ball.is_hovered() {
+            app.wallpaper()
+                .set_mouse_interactive_window(&window, true)
                 .map_err(|e| e.to_string())?;
+        }
+    } else {
+        let state = app.state::<AppState>();
+        state.ball.set_wallpaper(false);
+        let _ = app.wallpaper().set_mouse_interactive_window(&window, false);
+        app.wallpaper()
+            .detach(DetachRequest::new(window.label()))
+            .map_err(|e| e.to_string())?;
+        // 从 WorkerW 恢复为普通顶层窗口后，重新放回主显示器坐标系。
+        place_ball(&window);
+        if state.ball.is_hovered() {
+            let _ = window.set_ignore_cursor_events(false);
+        }
+        window
+            .set_always_on_top(level == "topmost")
+            .map_err(|e| e.to_string())?;
+
+        #[cfg(windows)]
+        {
+            let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+            let insert_after = if level == "topmost" {
+                HWND_TOP
             } else {
-                SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, 0);
-                window
-                    .set_always_on_top(level == "topmost")
-                    .map_err(|e| e.to_string())?;
+                HWND_BOTTOM
+            };
+            unsafe {
                 SetWindowPos(
                     hwnd,
-                    Some(HWND_TOP),
+                    Some(insert_after),
                     0,
                     0,
                     0,
@@ -709,51 +726,14 @@ fn apply_ball_window_level(app: &AppHandle, level: &str) -> Result<(), String> {
                 .map_err(|e| e.to_string())?;
             }
         }
-        return Ok(());
     }
 
-    #[cfg(not(windows))]
-    {
-        if level == "wallpaper" {
-            return Err("桌面壁纸层仅支持 Windows".to_string());
-        }
-        window
-            .set_always_on_top(level == "topmost")
-            .map_err(|e| e.to_string())
-    }
+    Ok(())
 }
 
 #[tauri::command]
 fn set_ball_window_level(app: AppHandle, level: String) -> Result<(), String> {
     apply_ball_window_level(&app, &level)
-}
-
-#[cfg(windows)]
-unsafe fn desktop_worker_window() -> Option<HWND> {
-    let progman = FindWindowW(w!("Progman"), PCWSTR::null()).ok()?;
-    // 通知资源管理器创建承载桌面壁纸的 WorkerW。
-    let _ = SendMessageTimeoutW(
-        progman,
-        0x052C,
-        WPARAM(0),
-        LPARAM(0),
-        SMTO_NORMAL,
-        1000,
-        None,
-    );
-
-    let mut worker = FindWindowExW(None, None, w!("WorkerW"), PCWSTR::null()).ok()?;
-    while !worker.0.is_null() {
-        let shell_view =
-            FindWindowExW(Some(worker), None, w!("SHELLDLL_DefView"), PCWSTR::null()).ok();
-        if shell_view.is_some_and(|hwnd| !hwnd.0.is_null()) {
-            let background =
-                FindWindowExW(None, Some(worker), w!("WorkerW"), PCWSTR::null()).ok()?;
-            return (!background.0.is_null()).then_some(background);
-        }
-        worker = FindWindowExW(None, Some(worker), w!("WorkerW"), PCWSTR::null()).ok()?;
-    }
-    None
 }
 
 #[tauri::command]
@@ -863,6 +843,7 @@ pub fn run() {
                 eprintln!("[ProcessAudioCapture] 第二个实例唤起主窗口失败：{err}");
             }
         }))
+        .plugin(tauri_plugin_wallpaper::init())
         .manage(AppState::default())
         // 点 × 只是把主界面收进托盘：采集与悬浮球继续在后台跑，
         // 想彻底退出用托盘菜单里的"退出"。
@@ -897,7 +878,7 @@ pub fn run() {
 
             // 上次的偏好：自动跟随 / 帧率 / 监听缓存都要先进状态机，
             // 界面还没起来就得生效
-            {
+            let initial_ball_level = {
                 let settings = prefs::load(&handle);
                 let state = app.state::<AppState>();
                 state
@@ -906,10 +887,6 @@ pub fn run() {
                 state.set_window_lists(&settings.window_allowlist, &settings.window_blocklist);
                 state.ball.set_locked(settings.ball_locked);
                 state.set_frame_rate(settings.frame_rate);
-                if let Err(err) = apply_ball_window_level(&handle, &settings.ball_window_level) {
-                    eprintln!("[ProcessAudioCapture] 设置悬浮球窗口层级失败：{err}");
-                }
-
                 // 监听缓存：上次听的是谁，这次接着听（不在线就一直等，见 [`monitor`]）
                 let cached = settings.monitor_target.trim().to_lowercase();
                 if cached.is_empty() {
@@ -919,12 +896,17 @@ pub fn run() {
                     state.set_monitor_target(&cached, true);
                     state.set_monitor_waiting(true);
                 }
-            }
+
+                settings.ball_window_level
+            };
 
             // 悬浮球定位后显示，避免先出现在左上角再跳过去
             if let Some(ball) = app.get_webview_window("ball") {
                 place_ball(&ball);
                 let _ = ball.show();
+            }
+            if let Err(err) = apply_ball_window_level(&handle, &initial_ball_level) {
+                eprintln!("[ProcessAudioCapture] 设置悬浮球窗口层级失败：{err}");
             }
 
             // 系统托盘：程序常驻后台时的总控入口
