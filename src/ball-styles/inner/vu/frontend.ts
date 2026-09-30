@@ -1,6 +1,12 @@
 import { alpha, slotColor, slotRamp } from "../../../theme";
-import { TAU, clamp01, lighten } from "../../helpers";
+import { TAU, clamp01, createEasing, lighten } from "../../helpers";
 import type { LayerCtx } from "../../types";
+
+/**
+ * 指针缓动：真表针是荡过去的，不直接跳到目标（状态按画布记，见 `createEasing`）。
+ * 静态预览只画一帧，卡片上依旧是"给什么画什么"。
+ */
+const easeNeedle = createEasing();
 
 function vuDeflection(level: number): number {
   const minDb = 36;
@@ -38,6 +44,14 @@ export function draw(ctx: CanvasRenderingContext2D, d: LayerCtx) {
   const SCALE_ORIGIN_DROP = 6.5;
   /** 针尖比端点半径还长出多少。大于 0 时针尖就会盖过刻度线。 */
   const NEEDLE_OVER = 2.2;
+  /**
+   * 指针**跟上去**的快慢（每秒趋近比例，越大越快）。
+   *
+   * 1 / 这个数 ≈ 时间常数：10 ≈ 0.1 秒。调小 → 指针更慵懒、更"甩"得慢。
+   */
+  const NEEDLE_ATTACK = 10;
+  /** 指针**落回来**的快慢（每秒趋近比例）。调小 → 回落更慢，更有真表针的惯性。 */
+  const NEEDLE_RELEASE = 10;
   /* ↑↑↑ 可调参数 ↑↑↑ */
 
   const pivotX = center;
@@ -185,8 +199,10 @@ export function draw(ctx: CanvasRenderingContext2D, d: LayerCtx) {
     ctx.fill();
   };
 
-  // 待机时让指针在起点附近轻轻游走，别看着像断电了
-  const value = live ? vuDeflection(level) : 0.03 + 0.032 * (0.5 + 0.5 * Math.sin(time / 1400));
+  // 这一帧想让指针停在哪儿（待机时在起点附近轻轻游走，别看着像断电了）
+  const target = live ? vuDeflection(level) : 0.03 + 0.032 * (0.5 + 0.5 * Math.sin(time / 1400));
+  // 真表针是荡过去的：按真实帧间隔朝目标缓动（静态预览 time = 0，直接到位）
+  const value = easeNeedle(ctx.canvas, target, time, NEEDLE_ATTACK, NEEDLE_RELEASE);
   const needleColor = lighten(slotColor(colors, 1), 0.2);
   // 比端点半径长一截：针尖穿过刻度线，针和刻度叠在一起
   const tipLength = endR + NEEDLE_OVER * unit;

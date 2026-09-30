@@ -1,6 +1,12 @@
 import { alpha, slotColor, slotRamp } from "../../../theme";
-import { clamp01 } from "../../helpers";
+import { clamp01, createEasing } from "../../helpers";
 import type { LayerCtx } from "../../types";
+
+/**
+ * 亮弧的缓动：跟内圈 VU 表的针一样，亮区是荡上去 / 落回来的，而不是瞬间跳到位。
+ * 状态按画布记，且跟内圈那份各记各的（见 `createEasing`）。
+ */
+const easeLevel = createEasing();
 
 export function draw(ctx: CanvasRenderingContext2D, d: LayerCtx): void {
   ctx.translate(d.center, d.center);
@@ -11,7 +17,18 @@ export function draw(ctx: CanvasRenderingContext2D, d: LayerCtx): void {
   const end = -Math.PI / 2 + (65 * Math.PI) / 180;
   const innerR = 34;
   const outerR = 42;
-  const value = d.live ? clamp01(d.level) : 0.04 + 0.025 * (0.5 + 0.5 * Math.sin(d.time / 1400));
+  /**
+   * 亮弧**跟上去**的快慢（每秒趋近比例，越大越快）。
+   *
+   * 1 / 这个数 ≈ 时间常数：10 ≈ 0.1 秒。调小 → 亮区追得更慢、更"甩"。
+   */
+  const LEVEL_ATTACK = 10;
+  /** 亮弧**落回来**的快慢（每秒趋近比例）。调小 → 回落更慢，余韵更长。 */
+  const LEVEL_RELEASE = 10;
+  // 这一帧想让亮区停在哪儿（待机时在起点附近轻轻游走，别看着像断电了）
+  const target = d.live ? clamp01(d.level) : 0.04 + 0.025 * (0.5 + 0.5 * Math.sin(d.time / 1400));
+  // 跟针一样带惯性：按真实帧间隔朝目标缓动（静态预览 time = 0，直接到位）
+  const value = easeLevel(ctx.canvas, target, d.time, LEVEL_ATTACK, LEVEL_RELEASE);
 
   ctx.lineCap = "round";
   ctx.strokeStyle = alpha(slotColor(d.colors, 0), 0.22);
