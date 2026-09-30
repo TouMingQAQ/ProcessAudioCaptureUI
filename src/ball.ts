@@ -91,6 +91,8 @@ const position = { x: 0.92, y: 0.88 };
 let dragging = false;
 let dragOffsetX = 0;
 let dragOffsetY = 0;
+// 释放鼠标时光标通常还停在球上；保留拖动态到光标离开，避免瞬间切入悬停缩放造成闪烁。
+let justDragged = false;
 
 function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
@@ -218,12 +220,33 @@ function endDrag(event: PointerEvent) {
   dragging = false;
   if (orb.hasPointerCapture(event.pointerId)) orb.releasePointerCapture(event.pointerId);
   stage.classList.remove("is-dragging");
+  justDragged = true;
+  stage.classList.add("just-dragged");
   void api.setBallDragging(false).catch(() => {});
   reportGeometry();
   placePanel();
   // 位置落盘：下次打开还在原地
   void prefs.patch({ ballPosX: position.x, ballPosY: position.y });
 }
+
+function clearJustDraggedOutside(clientX: number, clientY: number): void {
+  if (!justDragged) return;
+  const rect = orb.getBoundingClientRect();
+  if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
+    return;
+  }
+  justDragged = false;
+  stage.classList.remove("just-dragged");
+}
+
+orb.addEventListener("pointerleave", (event) => {
+  // Pointer capture release can produce a synthetic leave while the cursor is
+  // still over the orb. Only clear the guard when coordinates are truly outside.
+  clearJustDraggedOutside(event.clientX, event.clientY);
+});
+window.addEventListener("pointermove", (event) => {
+  clearJustDraggedOutside(event.clientX, event.clientY);
+});
 
 orb.addEventListener("pointerup", endDrag);
 orb.addEventListener("pointercancel", endDrag);
@@ -483,6 +506,7 @@ async function bootstrap() {
   // 球摆到上次记住的位置（首次运行就是默认的右下角那一带）
   moveOrb(loaded.ballPosX, loaded.ballPosY);
   applyI18n();
+  let previousSettings = loaded;
 
   visualizer.onRender = (rms, peak) => {
     const scale = Math.min(Math.pow(rms, 0.45), 1) * 100;
@@ -507,18 +531,40 @@ async function bootstrap() {
     flashHint(event.payload.message);
   });
   await prefs.subscribe((next) => {
+    const lookChanged =
+      next.ballColors.join("\u0000") !== previousSettings.ballColors.join("\u0000") ||
+      next.ballInnerStyle !== previousSettings.ballInnerStyle ||
+      next.ballOuterStyle !== previousSettings.ballOuterStyle ||
+      next.ballInnerSource !== previousSettings.ballInnerSource ||
+      next.ballOuterSource !== previousSettings.ballOuterSource ||
+      next.ballSize !== previousSettings.ballSize ||
+      next.ballGain !== previousSettings.ballGain ||
+      next.ballPulse !== previousSettings.ballPulse ||
+      next.ballPulseAlgorithm !== previousSettings.ballPulseAlgorithm ||
+      next.ballPulseAmount !== previousSettings.ballPulseAmount;
+    const positionChanged =
+      next.ballPosX !== previousSettings.ballPosX ||
+      next.ballPosY !== previousSettings.ballPosY ||
+      next.ballSize !== previousSettings.ballSize;
+    const languageChanged = next.language !== previousSettings.language;
+
     locked = next.ballLocked;
-    visualizer.setFrameLimit(next.frameRate);
+    if (next.frameRate !== previousSettings.frameRate) {
+      visualizer.setFrameLimit(next.frameRate);
+    }
     // 刚被锁上时本地可能还开着面板：立刻收起来，别留一块点不动的面板悬在桌面上
     if (locked) applyHover(false);
-    // 外观、数据源与语言都可能变：重新读一次外观，再用新语言重画当前画面
-    applyLook(next);
-    // 球可能被调大了，位置重新夹一下（免得半个球露到屏幕外）
-    moveOrb(position.x, position.y);
-    applyI18n();
-    hint.textContent = t("follow.chip");
-    if (lastTick) onTick(lastTick);
-    else syncCaptureButton();
+    // 位置保存也会广播整份设置；只有外观真的变化时才刷新渲染器，避免拖动结束闪烁。
+    if (lookChanged) applyLook(next);
+    // 球可能被调大了，或位置真的变了，才重新计算位置和命中区域。
+    if (positionChanged) moveOrb(next.ballPosX, next.ballPosY);
+    if (languageChanged) {
+      applyI18n();
+      hint.textContent = t("follow.chip");
+      if (lastTick) onTick(lastTick);
+      else syncCaptureButton();
+    }
+    previousSettings = next;
   });
 
   const status = await api.captureStatus();

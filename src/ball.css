@@ -66,7 +66,8 @@ body.ball-body {
 }
 
 /* 拖动中不要放大缩小，不然球会比指针跑得快 */
-.stage.is-dragging .orb {
+.stage.is-dragging .orb,
+.stage.just-dragged .orb {
   transform: translate(-50%, -50%);
   transition: none;
 }

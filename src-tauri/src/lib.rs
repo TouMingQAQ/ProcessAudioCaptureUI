@@ -38,8 +38,8 @@ use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowExW, FindWindowW, SendMessageTimeoutW, SetParent, SetWindowPos, HWND_BOTTOM,
-    HWND_TOP, SMTO_NORMAL, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    FindWindowExW, FindWindowW, SendMessageTimeoutW, SetWindowLongPtrW, SetWindowPos,
+    GWLP_HWNDPARENT, HWND_BOTTOM, HWND_TOP, SMTO_NORMAL, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
 };
 
 use capture::{ActiveCapture, StartReport, StopReport};
@@ -664,12 +664,12 @@ fn ball_window(app: &AppHandle) -> Result<WebviewWindow, String> {
         .ok_or_else(|| "悬浮球窗口不存在".to_string())
 }
 
-/// 将悬浮球放到用户选择的窗口层级。桌面壁纸层使用 Windows 的 WorkerW，
-/// 这样它会跟着桌面显示但不会盖住普通应用窗口。
+/// 将悬浮球放到用户选择的窗口层级。壁纸模式把桌面 WorkerW 设为拥有窗口，
+/// 悬浮球仍是顶层窗体，因此保留 WebView 的输入能力。
 fn apply_ball_window_level(app: &AppHandle, level: &str) -> Result<(), String> {
     let window = ball_window(app)?;
     let level = match level {
-        "normal" | "wallpaper" | "topmost" => level,
+        "wallpaper" | "topmost" => level,
         _ => "topmost",
     };
 
@@ -680,8 +680,8 @@ fn apply_ball_window_level(app: &AppHandle, level: &str) -> Result<(), String> {
             if level == "wallpaper" {
                 let worker =
                     desktop_worker_window().ok_or_else(|| "找不到桌面壁纸窗口".to_string())?;
-                SetParent(hwnd, Some(worker)).map_err(|e| e.to_string())?;
                 window.set_always_on_top(false).map_err(|e| e.to_string())?;
+                SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, worker.0 as isize);
                 SetWindowPos(
                     hwnd,
                     Some(HWND_BOTTOM),
@@ -693,19 +693,13 @@ fn apply_ball_window_level(app: &AppHandle, level: &str) -> Result<(), String> {
                 )
                 .map_err(|e| e.to_string())?;
             } else {
-                // 解除 WorkerW 父窗口后恢复为普通顶层窗口。
-                SetParent(hwnd, None).map_err(|e| e.to_string())?;
+                SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, 0);
                 window
                     .set_always_on_top(level == "topmost")
                     .map_err(|e| e.to_string())?;
-                let insert_after = if level == "topmost" {
-                    HWND_TOP
-                } else {
-                    HWND_BOTTOM
-                };
                 SetWindowPos(
                     hwnd,
-                    Some(insert_after),
+                    Some(HWND_TOP),
                     0,
                     0,
                     0,
@@ -737,7 +731,7 @@ fn set_ball_window_level(app: AppHandle, level: String) -> Result<(), String> {
 #[cfg(windows)]
 unsafe fn desktop_worker_window() -> Option<HWND> {
     let progman = FindWindowW(w!("Progman"), PCWSTR::null()).ok()?;
-    // 通知资源管理器创建 WorkerW 层。
+    // 通知资源管理器创建承载桌面壁纸的 WorkerW。
     let _ = SendMessageTimeoutW(
         progman,
         0x052C,
@@ -753,8 +747,9 @@ unsafe fn desktop_worker_window() -> Option<HWND> {
         let shell_view =
             FindWindowExW(Some(worker), None, w!("SHELLDLL_DefView"), PCWSTR::null()).ok();
         if shell_view.is_some_and(|hwnd| !hwnd.0.is_null()) {
-            let next = FindWindowExW(None, Some(worker), w!("WorkerW"), PCWSTR::null()).ok()?;
-            return (!next.0.is_null()).then_some(next);
+            let background =
+                FindWindowExW(None, Some(worker), w!("WorkerW"), PCWSTR::null()).ok()?;
+            return (!background.0.is_null()).then_some(background);
         }
         worker = FindWindowExW(None, Some(worker), w!("WorkerW"), PCWSTR::null()).ok()?;
     }
