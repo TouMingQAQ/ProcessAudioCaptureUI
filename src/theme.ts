@@ -660,6 +660,8 @@ export function applyBallLook(
   const root = document.documentElement;
   root.dataset.ballInner = inner.id;
   root.dataset.ballOuter = outer.id;
+  root.dataset.ballIdleGlyph = inner.idleGlyph;
+  root.dataset.ballSlowTransition = String(inner.slowTransition || outer.slowTransition);
   root.dataset.ballInnerSource = resolveDataSource(innerSource, inner.mode);
   root.dataset.ballOuterSource = resolveDataSource(outerSource, outer.mode);
 }
